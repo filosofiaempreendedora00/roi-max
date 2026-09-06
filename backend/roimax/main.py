@@ -1,0 +1,219 @@
+"""API HTTP + WebSocket. Um servidor, dois clientes idênticos."""
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from . import db, push
+from .budget import odds_api_budget
+from .config import ROOT, settings
+from .hub import hub
+from .models import PushSubscription
+from .scheduler import ScanConfig, scanner
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("roimax")
+
+WEB_DIST = ROOT / "web" / "dist"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.connect()
+    task = asyncio.create_task(scanner.run_forever())
+    log.info("ROI Max no ar — odds ao vivo: %s", settings.has_live_odds)
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="ROI Max", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+)
+
+
+def require_token(token: str = Query(default="")) -> None:
+    if token != settings.roimax_token:
+        raise HTTPException(status_code=401, detail="token inválido")
+
+
+def _snapshot() -> dict:
+    cfg = ScanConfig.load()
+    return {
+        "signals": [s.model_dump() for s in db.recent_signals(60)],
+        "budget": odds_api_budget.status().__dict__,
+        "config": cfg.__dict__,
+        "status": hub.status,
+        "last_scan": hub.last_scan.isoformat() if hub.last_scan else None,
+        "live_odds_enabled": settings.has_live_odds,
+        "push_configured": bool(settings.vapid_public_key),
+        "commission": settings.betfair_commission,
+        "clients": hub.n_clients,
+        "last_error": scanner.last_error,
+    }
+
+
+# ------------------------------------------------------------------ REST
+
+@app.get("/api/health")
+async def health() -> dict:
+    return {"ok": True, "live_odds": settings.has_live_odds, "clients": hub.n_clients}
+
+
+@app.get("/api/state", dependencies=[Depends(require_token)])
+async def state() -> dict:
+    return _snapshot()
+
+
+@app.post("/api/scan", dependencies=[Depends(require_token)])
+async def scan(urgent: bool = False) -> dict:
+    """Varredura manual. Consome créditos — use quando for operar."""
+    sigs = await scanner.scan_once(urgent=urgent)
+    return {"found": len(sigs), "signals": [s.model_dump() for s in sigs],
+            "budget": odds_api_budget.status().__dict__}
+
+
+@app.post("/api/signals/{signal_id}/act", dependencies=[Depends(require_token)])
+async def act(signal_id: str) -> dict:
+    db.mark_acted(signal_id)
+    await hub.broadcast("acted", {"signal_id": signal_id})
+    return {"ok": True}
+
+
+class ConfigPatch(BaseModel):
+    sports: list[str] | None = None
+    window_start: str | None = None
+    window_end: str | None = None
+    enabled: bool | None = None
+    push_enabled: bool | None = None
+    min_ev_to_push: float | None = None
+    cooldown_min: int | None = None
+    thresholds: dict | None = None
+
+
+@app.patch("/api/config", dependencies=[Depends(require_token)])
+async def patch_config(patch: ConfigPatch) -> dict:
+    cfg = ScanConfig.load()
+    for k, v in patch.model_dump(exclude_none=True).items():
+        setattr(cfg, k, v)
+    cfg.save()
+    await hub.broadcast("config", cfg.__dict__)
+    return cfg.__dict__
+
+
+@app.get("/api/budget", dependencies=[Depends(require_token)])
+async def budget() -> dict:
+    return odds_api_budget.status().__dict__
+
+
+# ------------------------------------------------------------------ push
+
+@app.get("/api/push/key")
+async def push_key() -> dict:
+    return {"publicKey": settings.vapid_public_key}
+
+
+@app.post("/api/push/subscribe", dependencies=[Depends(require_token)])
+async def push_subscribe(sub: PushSubscription) -> dict:
+    db.save_subscription(sub)
+    return {"ok": True, "devices": len(db.all_subscriptions())}
+
+
+@app.post("/api/push/test", dependencies=[Depends(require_token)])
+async def push_test() -> dict:
+    from datetime import timedelta
+
+    from .models import Outcome, Signal, SignalKind, utcnow
+    demo = Signal(
+        id="test", kind=SignalKind.VALUE_BACK, event_id="test",
+        event_label="Teste x ROI Max", outcome=Outcome.HOME, side="back",
+        market_odds=2.50, fair_odds=2.20, edge_pct=13.6, ev=0.12, kelly=0.05,
+        confidence=1.0, deeplink=f"https://{settings.betfair_domain}/exchange/plus/",
+        expires_at=utcnow() + timedelta(minutes=5),
+    )
+    return {"sent": push.send_signal(demo)}
+
+
+# ------------------------------------------------------------- backtest
+
+class BacktestRequest(BaseModel):
+    divisions: list[str] = ["E0", "SP1", "I1", "D1", "F1"]
+    seasons: list[str] = ["2223", "2324", "2425", "2526"]
+    extra: list[str] = []
+    min_edge_pct: float = 4.0
+    min_ev: float = 0.02
+    min_books: int = 3
+    stake_mode: str = "flat"
+    lay_spread: float = 0.0
+
+
+@app.post("/api/backtest", dependencies=[Depends(require_token)])
+async def backtest(req: BacktestRequest) -> dict:
+    from .backtest.replay import baseline_closing_line, run_backtest
+    from .engine.detectors import Context, Thresholds
+    from .providers.footballdata_uk import load_extra, load_main
+
+    def work() -> dict:
+        matches = []
+        for div in req.divisions:
+            matches.extend(load_main(div, req.seasons))
+        for code in req.extra:
+            matches.extend(load_extra(code))
+        matches.sort(key=lambda m: m.date)
+        if not matches:
+            return {"erro": "nenhuma partida carregada — verifique a conexão ou as ligas"}
+        ctx = Context(thresholds=Thresholds(
+            min_edge_pct=req.min_edge_pct, min_ev=req.min_ev, min_books=req.min_books,
+        ))
+        res = run_backtest(matches, ctx=ctx, stake_mode=req.stake_mode,
+                           lay_spread=req.lay_spread)
+        return {
+            "resumo": res.summary(),
+            "controle_favorito": baseline_closing_line(matches),
+            "curva": res.equity_curve[-500:],
+            "ultimas_apostas": [b.__dict__ for b in res.bets[-40:]],
+        }
+
+    return await asyncio.to_thread(work)
+
+
+# ------------------------------------------------------------ WebSocket
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket, token: str = Query(default="")):
+    if token != settings.roimax_token:
+        await ws.close(code=4401)
+        return
+    await hub.connect(ws)
+    try:
+        await hub.send(ws, "snapshot", _snapshot())
+        while True:
+            raw = await ws.receive_text()
+            if raw == "ping":
+                await ws.send_text("pong")
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await hub.disconnect(ws)
+
+
+# ------------------------------------------------------------- estáticos
+
+if WEB_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def spa(full_path: str):
+        candidate = WEB_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(WEB_DIST / "index.html")
