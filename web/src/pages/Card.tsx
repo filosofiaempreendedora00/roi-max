@@ -4,10 +4,11 @@ import { num, odds as fmtOdds, outcomeTeam, pct } from "../lib/format";
 import type { CardEntry, ClvStats, DailyCard } from "../lib/types";
 
 export function CardPage({
-  card, clv, onRebuild,
+  card, clv, liveOdds, onRebuild,
 }: {
   card: DailyCard | null;
   clv: ClvStats;
+  liveOdds: boolean;
   onRebuild: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -15,6 +16,39 @@ export function CardPage({
   async function rebuild() {
     setBusy(true);
     try { await onRebuild(); } finally { setBusy(false); }
+  }
+
+  // Sem chave de API não existe carta possível, e dizer "nenhuma entrada hoje"
+  // faria parecer que o motor olhou o mercado e não achou nada. São coisas
+  // muito diferentes: uma é resultado, a outra é falta de configuração.
+  if (!liveOdds) {
+    return (
+      <div className="page">
+        <section className="panel setup">
+          <h3>Falta conectar uma fonte de odds</h3>
+          <p className="muted">
+            O app está no ar e o motor funciona, mas não há de onde ler preços.
+            Sem isso não existe carta — nem hoje nem em nenhum dia.
+          </p>
+          <ol className="steps">
+            <li>
+              Crie uma chave gratuita em{" "}
+              <a href="https://the-odds-api.com" target="_blank" rel="noreferrer">
+                the-odds-api.com
+              </a>{" "}
+              (500 créditos por mês, sem cartão)
+            </li>
+            <li>Cole em <code>ODDS_API_KEY</code> no arquivo <code>.env</code></li>
+            <li>Reinicie o servidor</li>
+          </ol>
+          <p className="muted">
+            Enquanto isso, a aba <b>Backtest</b> funciona por completo — ela usa
+            o histórico gratuito e não depende de chave nenhuma.
+          </p>
+        </section>
+        <ClvPanel clv={clv} />
+      </div>
+    );
   }
 
   return (

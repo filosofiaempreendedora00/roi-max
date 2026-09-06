@@ -100,6 +100,7 @@ export default function App() {
           <CardPage
             card={snapshot.card}
             clv={snapshot.clv}
+            liveOdds={snapshot.live_odds_enabled}
             onRebuild={async () => {
               const c = await api.buildCard();
               setSnapshot((p) => (p ? { ...p, card: c } : p));
