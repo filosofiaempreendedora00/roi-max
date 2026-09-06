@@ -115,3 +115,67 @@ preços melhores que o fechamento.
   aposta.
 - Não cobre outros esportes nem mercados além de 1X2, O/U 2.5 e handicap
   asiático, que é o que o histórico gratuito traz.
+
+---
+
+# Segunda rodada: verificado no motor Python de verdade
+
+Com o Python 3.13 instalado, os números abaixo saem do backend em `backend/`,
+não do protótipo em Node. 30 testes passando. Os dados são os mesmos 16.981
+jogos, dos quais **2.457 têm preço da Betfair Exchange**, distribuídos em 204
+dias de calendário — cerca de 12 jogos por dia nestas 12 ligas.
+
+## A comissão é o muro
+
+Fronteira completa, filtrando por EV mínimo (divergência ≥ 2%, odds ≤ 6,00,
+comissão de 6,5%):
+
+| EV mínimo | entradas/semana | ROI | odd média | CLV | bateu o fecho |
+|---|---|---|---|---|---|
+| 0,05 | 0,07 | −100,00% | 5,40 | +5,22% | 100,0% |
+| **0,02** | **0,58** | −75,42% | 4,85 | **+9,55%** | **70,6%** |
+| 0,01 | 1,13 | −52,75% | 4,75 | +5,55% | 63,6% |
+| 0,00 | 2,06 | −42,97% | 4,37 | +3,35% | 56,7% |
+| −0,02 | 7,21 | −25,26% | 3,92 | +0,35% | 45,7% |
+
+O CLV cai de forma perfeitamente monótona conforme o filtro afrouxa
+(+9,55% → +5,55% → +3,35% → +0,35%), e a taxa de acerto contra o fechamento
+acompanha (70,6% → 63,6% → 56,7% → 45,7%). Isso confirma que o filtro de EV
+ordena por qualidade de preço de verdade.
+
+E mostra o custo: **para chegar a uma entrada por dia é preciso ir até EV
+negativo, onde o CLV desaparece.** Os 6,5% de comissão da Betfair engolem
+qualquer vantagem menor que isso.
+
+## Quantas entradas o modo gratuito realmente dá
+
+**Cerca de 0,6 por semana** no filtro que preserva o CLV (EV ≥ 0,02) —
+não por dia. Cobrindo 12 ligas europeias, só o mercado 1X2, só com preço de
+Exchange.
+
+Para 5–10 por dia mantendo esse filtro seria preciso multiplicar a cobertura
+por volta de 80 vezes. Isso não se consegue com mais ligas: consegue-se com
+**mais mercados por jogo** (over/under, ambas marcam, handicap, escanteios,
+cartões, placar exato) e outros esportes. Que é exatamente onde o free tier
+da The Odds API não chega, porque esses mercados custam crédito por evento.
+
+## O filtro de divergência caça zebras
+
+Sem limite de odds, o backtest deu odd média **9,34** e 3,3% de acerto. Faz
+sentido: em favoritos os preços são apertados e uma divergência de 6% quase
+nunca aparece, então tudo que passa no filtro é cotação alta. Para quem entra
+e deixa rolar, isso é variância insuportável — daí o `max_odds` padrão de
+6,00.
+
+## Sobre o ROI negativo
+
+Em todas as linhas acima o ROI é negativo, e é preciso ser honesto sobre o
+que isso significa e o que não significa. No filtro EV ≥ 0,02 são **17
+apostas**. Com odd média 4,85 esperava-se cerca de 3,5 acertos; saíram 1. A
+chance de sair 1 ou menos por azar é de aproximadamente 12% — pouco provável,
+mas longe de ser evidência de sistema quebrado.
+
+Dezessete apostas não dizem nada sobre lucratividade. É por isso que o CLV
+existe: ele dá sinal em dezenas de apostas, enquanto o ROI precisa de
+milhares. E o CLV aqui é consistentemente positivo, monótono no filtro, e
+reproduzido em dois arcabouços independentes (Node e Python).

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 from ..engine.detectors import Context, Thresholds
 from ..providers.footballdata_uk import EXTRA_CODES, MAIN_DIVS, load_extra, load_main
@@ -23,6 +24,8 @@ def main() -> None:
     ap.add_argument("--min-edge", type=float, default=4.0)
     ap.add_argument("--min-ev", type=float, default=0.02)
     ap.add_argument("--min-books", type=int, default=3)
+    ap.add_argument("--min-odds", type=float, default=1.30)
+    ap.add_argument("--max-odds", type=float, default=6.00)
     ap.add_argument("--commission", type=float, default=0.065)
     ap.add_argument("--stake", choices=["flat", "kelly"], default="flat")
     ap.add_argument("--lay-spread", type=float, default=0.0,
@@ -31,24 +34,29 @@ def main() -> None:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
+    # com --json o stdout tem que ser JSON puro, senão não dá para encadear
+    chatter = sys.stderr if args.json else sys.stdout
+
     matches = []
     for div in args.divs:
         got = load_main(div, args.seasons, refresh=args.refresh)
-        print(f"  {div:>4}: {len(got):5d} partidas")
+        print(f"  {div:>4}: {len(got):5d} partidas", file=chatter)
         matches.extend(got)
     for code in args.extra:
         got = load_extra(code, refresh=args.refresh)
-        print(f"  {code:>4}: {len(got):5d} partidas")
+        print(f"  {code:>4}: {len(got):5d} partidas", file=chatter)
         matches.extend(got)
 
     if not matches:
-        print("\nNenhuma partida carregada. Verifique a conexão com football-data.co.uk.")
+        print("\nNenhuma partida carregada. Verifique a conexão com football-data.co.uk.",
+              file=chatter)
         return
 
     matches.sort(key=lambda m: m.date)
     ctx = Context(
         thresholds=Thresholds(min_edge_pct=args.min_edge, min_ev=args.min_ev,
-                              min_books=args.min_books),
+                              min_books=args.min_books,
+                              min_odds=args.min_odds, max_odds=args.max_odds),
         commission=args.commission,
     )
     res = run_backtest(matches, ctx=ctx, stake_mode=args.stake,

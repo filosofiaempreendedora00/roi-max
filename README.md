@@ -72,6 +72,19 @@ margem no resultado e inventaria valor que não existe.
 
 Requisitos: **Python 3.11+** e **Node 18+**.
 
+O macOS traz só o Python 3.9, que não serve. A forma mais leve de resolver é
+o `uv`, que instala um Python próprio na pasta do usuário sem pedir senha de
+administrador e sem tocar no Python do sistema:
+
+```bash
+uv python install 3.13
+uv venv --python 3.13
+uv pip install -e "backend[dev]"
+cp .env.example .env
+```
+
+Sem `uv`, qualquer Python 3.11+ serve:
+
 ```bash
 python3 -m venv .venv
 ./.venv/bin/pip install -e "backend[dev]"

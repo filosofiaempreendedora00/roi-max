@@ -44,11 +44,22 @@ AGGREGATE_BOOKS = {"market_max", "market_avg"}
 class Thresholds:
     """Todos os gatilhos em um lugar só, para você calibrar depois do backtest."""
 
-    min_edge_pct: float = 4.0       # divergência mínima vs consenso
+    # Calibrado pelo backtest (ver research/README.md). O filtro que manda é
+    # o EV, não a divergência: a comissão de 6,5% engole qualquer vantagem
+    # menor. Em EV >= 0,02 o CLV fica em +9,55% com 70,6% batendo o
+    # fechamento; afrouxar para EV >= 0 derruba o CLV para +3,35%.
+    min_edge_pct: float = 2.0       # divergência mínima vs consenso
     min_ev: float = 0.02            # EV mínimo por unidade arriscada
     min_books: int = 3              # casas necessárias para um consenso confiável
     max_book_stdev: float = 0.05    # desacordo máximo entre casas (em prob.)
     max_spread_pct: float = 8.0     # acima disso o book é fino demais p/ confiar
+    # Faixa de odds aceitável. Sem isto o filtro de divergência vira um
+    # caçador de zebras: em favoritos os preços são apertados e 6% de
+    # divergência quase não ocorre, então tudo que passa é cotação alta.
+    # Backtest com esse viés deu odd média 9,34 e 3% de acerto — variância
+    # insuportável para quem entra e deixa rolar.
+    min_odds: float = 1.30
+    max_odds: float = 6.00
     wide_spread_pct: float = 12.0   # a partir daqui vira sinal de market making
     steam_pct: float = 6.0          # movimento de preço p/ disparar STEAM
     steam_window_min: int = 10
@@ -156,6 +167,8 @@ def detect_value(book: MarketBook, ctx: Context) -> list[Signal]:
     for oc in ORDER:
         q = exch.get(oc)
         if not q or not q.back:
+            continue
+        if not (t.min_odds <= q.back <= t.max_odds):
             continue
         # book fino: o preço não é confiável nem executável. Só dá para medir
         # quando os dois lados são conhecidos (no histórico, o lay não existe).
@@ -271,7 +284,9 @@ def detect_steam(book: MarketBook, ctx: Context) -> list[Signal]:
             continue
         hist = ctx.history.get((book.event.id, q.bookmaker, oc.value), [])
         past = [h for h in hist if h.ts >= cutoff and h.back]
-        if len(past) < 2:
+        # basta UM ponto anterior: o preço atual (`q`) é o segundo ponto da
+        # comparação. Exigir dois atrasava a detecção sem ganho nenhum.
+        if not past:
             continue
         oldest = min(past, key=lambda h: h.ts)
         if not oldest.back:
