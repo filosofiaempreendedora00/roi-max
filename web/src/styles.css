@@ -20,6 +20,13 @@
 
 * { box-sizing: border-box; }
 
+/* No toque, um tap um pouco longo em cima de um botão vira seleção de texto
+   e o clique se perde. Num app em que o clique é a odd, isso custa dinheiro. */
+button, .btn, .chip, .badge, .tabbar button {
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 html, body, #root { height: 100%; }
 
 body {
@@ -36,7 +43,8 @@ body {
 /* ------------------------------------------------------------ app bar */
 .appbar {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; padding: max(10px, env(safe-area-inset-top)) 14px 10px;
+  gap: 12px; padding: max(10px, env(safe-area-inset-top))
+    max(14px, calc((100% - var(--maxw)) / 2)) 10px;
   background: var(--surface); border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 10;
 }
@@ -54,14 +62,21 @@ body {
 .credits { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
 .scanning { font-size: 12px; color: var(--accent); }
 
-.content { flex: 1; overflow-y: auto; padding: 12px 12px 84px;
+/* Uma coluna estreita no celular vira uma faixa esticada no desktop se a
+   largura não for limitada — o botão de 1200px é pior que o de 300px. */
+:root { --maxw: 940px; }
+.gutter { padding-inline: max(14px, calc((100% - var(--maxw)) / 2)); }
+
+.content { flex: 1; overflow-y: auto; width: 100%;
+  padding: 12px max(12px, calc((100% - var(--maxw)) / 2)) 84px;
   -webkit-overflow-scrolling: touch; }
 
 /* -------------------------------------------------------------- tabbar */
 .tabbar {
   position: fixed; bottom: 0; left: 0; right: 0; display: flex;
   background: var(--surface); border-top: 1px solid var(--line);
-  padding-bottom: env(safe-area-inset-bottom); z-index: 10;
+  padding: 0 max(0px, calc((100% - var(--maxw)) / 2)) env(safe-area-inset-bottom);
+  z-index: 10;
 }
 .tabbar button {
   flex: 1; padding: 15px 0; background: none; border: 0; color: var(--muted);
@@ -71,6 +86,10 @@ body {
 
 /* ---------------------------------------------------------------- card */
 .feed { display: flex; flex-direction: column; gap: 12px; }
+@media (min-width: 760px) {
+  .feed { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start; }
+}
 
 .card {
   background: var(--surface); border: 1px solid var(--line);
@@ -109,6 +128,7 @@ body {
 
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
+.na { color: var(--muted); }
 
 .confidence { margin: 12px 0 4px; }
 .conf-bar { height: 3px; background: var(--accent); border-radius: 2px; min-width: 2px; }
@@ -135,8 +155,11 @@ body {
 /* ---------------------------------------------------------- calculadora */
 .calc { margin-top: 12px; padding: 12px; background: var(--surface-2);
   border-radius: 10px; }
-.calc-field { display: flex; align-items: center; gap: 10px; }
-.calc-field span { font-size: 12px; color: var(--muted); width: 48px; }
+/* `label` global é coluna; aqui o rótulo fica ao lado do campo, então a
+   direção precisa ser redeclarada. */
+.calc-field { display: flex; flex-direction: row; align-items: center; gap: 10px; }
+.calc-field span { font-size: 12px; color: var(--muted); width: 48px;
+  flex: 0 0 auto; text-align: left; }
 .calc-out { display: flex; gap: 20px; margin-top: 10px; }
 .calc-out div { display: flex; flex-direction: column; }
 .calc-label { font-size: 10px; color: var(--muted); text-transform: uppercase;
@@ -165,7 +188,11 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px;
 
 /* ---------------------------------------------------------------- chips */
 .toolbar { display: flex; justify-content: space-between; align-items: center;
-  gap: 10px; margin-bottom: 12px; }
+  gap: 12px; margin-bottom: 12px; }
+.toolbar .chips { flex: 1 1 auto; min-width: 0;
+  -webkit-mask-image: linear-gradient(to right, #000 88%, transparent);
+  mask-image: linear-gradient(to right, #000 88%, transparent); }
+.toolbar .switch { flex: 0 0 auto; }
 .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
 .chips::-webkit-scrollbar { display: none; }
 .chips.wrap { flex-wrap: wrap; overflow: visible; margin-bottom: 14px; }

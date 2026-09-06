@@ -49,7 +49,13 @@ export function SignalCard({
           </div>
           <div>
             <span>EV</span>
-            <b className={signal.ev > 0 ? "pos" : "neg"}>{num(signal.ev, 3)}</b>
+            {/* Steam e book fino não carregam EV: são avisos, não valor
+                calculado. Mostrar 0,000 em vermelho leria como EV ruim. */}
+            {signal.ev === 0 ? (
+              <b className="na">—</b>
+            ) : (
+              <b className={signal.ev > 0 ? "pos" : "neg"}>{num(signal.ev, 3)}</b>
+            )}
           </div>
         </div>
       </div>
