@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from . import db, push
+from . import clv, dailycard, db, push
 from .budget import odds_api_budget
 from .engine.detectors import Context, Thresholds, run_all
 from .hub import hub
@@ -32,9 +32,21 @@ class ScanConfig:
     window_end: str = "23:30"
     enabled: bool = True
     push_enabled: bool = True
-    min_ev_to_push: float = 0.03
+    min_ev_to_push: float = 0.0
     cooldown_min: int = 20           # não repetir o mesmo sinal antes disso
     thresholds: dict = field(default_factory=dict)
+
+    # --- carta do dia ---
+    card_enabled: bool = True
+    card_time: str = "16:00"         # horário de Brasília em que a carta sai
+    card_max_entries: int = 5
+    card_bankroll: float = 1000.0
+    card_target_ev: float = 0.0      # EV que define o preço-limite
+
+    # Pedir o mercado de lay dobra o custo em crédito. Como a carta é de
+    # entradas back para deixar rolar, o padrão é não pedir — o crédito
+    # economizado vira o dobro de campeonatos varridos.
+    include_lay: bool = False
 
     @classmethod
     def load(cls) -> "ScanConfig":
@@ -43,6 +55,10 @@ class ScanConfig:
 
     def save(self) -> None:
         db.kv_set("scan_config", self.__dict__)
+
+    @property
+    def markets(self) -> tuple[str, ...]:
+        return ("h2h", "h2h_lay") if self.include_lay else ("h2h",)
 
     def in_window(self, now: datetime | None = None) -> bool:
         now = (now or datetime.now(timezone.utc)).astimezone(BRT)
@@ -113,13 +129,14 @@ class Scanner:
         all_books: list[MarketBook] = []
         for sport in cfg.sports:
             try:
-                books = await self.provider.fetch_odds(sport, urgent=urgent)
+                books = await self.provider.fetch_odds(
+                    sport, markets=cfg.markets, urgent=urgent)
             except Exception as exc:
                 log.exception("falha ao buscar %s", sport)
                 self.last_error = str(exc)
                 continue
             all_books.extend(books)
-            if not odds_api_budget.can_spend(2, urgent=urgent):
+            if not odds_api_budget.can_spend(len(cfg.markets), urgent=urgent):
                 log.warning("orçamento esgotado no meio da varredura")
                 break
 
@@ -127,6 +144,11 @@ class Scanner:
         for b in all_books:
             db.upsert_event(b.event)
             db.insert_quotes(b.quotes)
+
+        # o preço de fechamento dos palpites abertos sai de graça daqui
+        touched = clv.update_closing(all_books)
+        if touched:
+            log.info("preço de fechamento atualizado em %d palpites", touched)
 
         ctx = self._context(all_books, cfg)
         fresh: list[Signal] = []
@@ -158,6 +180,41 @@ class Scanner:
         self.last_error = None
         return fresh
 
+    # ----------------------------------------------------------- carta do dia
+
+    async def build_card_if_due(self, cfg: ScanConfig) -> None:
+        """Monta a carta uma vez por dia, passado o horário configurado.
+
+        Sai tarde de propósito. O backtest mostrou que o preço de abertura da
+        Exchange é pior que o de fechamento (CLV de −4% a −7% sem filtro), então
+        quanto mais perto dos jogos a carta sair, melhor o preço que você pega.
+        """
+        if not cfg.card_enabled:
+            return
+        today = datetime.now(BRT).date().isoformat()
+        if db.get_card(today):
+            return
+        try:
+            hh, mm = map(int, cfg.card_time.split(":"))
+        except ValueError:
+            hh, mm = 16, 0
+        now = datetime.now(BRT)
+        if (now.hour, now.minute) < (hh, mm):
+            return
+
+        card = dailycard.build(
+            db.recent_signals(200),
+            cfg=dailycard.CardConfig(
+                max_entries=cfg.card_max_entries, bankroll=cfg.card_bankroll,
+            ),
+            target_ev=cfg.card_target_ev,
+            scanned_events=len(db.upcoming_events(500)),
+        )
+        await hub.broadcast("card", card.model_dump())
+        if cfg.push_enabled and card.entries:
+            push.send_card(card)
+        log.info("carta do dia: %d entradas", len(card.entries))
+
     # ---------------------------------------------------------------- loop
 
     async def run_forever(self) -> None:
@@ -174,12 +231,12 @@ class Scanner:
                     continue
 
                 st = odds_api_budget.status()
-                cost = 2 * len(cfg.sports)
+                cost = len(cfg.markets) * len(cfg.sports)
                 if st.daily_allowance < cost:
                     # cota do dia não cobre uma varredura completa: reduz o escopo
                     keep = max(1, st.daily_allowance // 2)
                     cfg.sports = cfg.sports[:keep]
-                    cost = 2 * len(cfg.sports)
+                    cost = len(cfg.markets) * len(cfg.sports)
 
                 if not odds_api_budget.can_spend(cost):
                     log.info("sem orçamento para varrer agora; aguardando")
@@ -187,6 +244,7 @@ class Scanner:
                     continue
 
                 await self.scan_once(cfg)
+                await self.build_card_if_due(cfg)
 
                 # espaça as varreduras para caber na cota diária
                 scans_per_day = max(1, st.daily_allowance // max(cost, 1))

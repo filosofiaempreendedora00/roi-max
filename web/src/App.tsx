@@ -2,17 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, connect, getToken, type WsEvent } from "./lib/api";
 import { registerServiceWorker } from "./lib/push";
 import { BacktestPage } from "./pages/Backtest";
+import { CardPage } from "./pages/Card";
 import { SettingsPage } from "./pages/Settings";
 import { SignalsPage } from "./pages/Signals";
 import type { Signal, Snapshot } from "./lib/types";
 
-type Tab = "sinais" | "backtest" | "config";
+type Tab = "carta" | "sinais" | "backtest" | "config";
 const BANKROLL_KEY = "roimax.bankroll";
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [connected, setConnected] = useState(false);
-  const [tab, setTab] = useState<Tab>("sinais");
+  // a carta é a tela principal: é o que ele abre uma vez por dia
+  const [tab, setTab] = useState<Tab>("carta");
   const [scanning, setScanning] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
   const [bankroll, setBankrollState] = useState(
@@ -45,6 +47,8 @@ export default function App() {
         }
         case "config":
           return { ...prev, config: e.payload };
+        case "card":
+          return { ...prev, card: e.payload };
         default:
           return prev;
       }
@@ -92,6 +96,16 @@ export default function App() {
       </header>
 
       <main className="content">
+        {tab === "carta" && (
+          <CardPage
+            card={snapshot.card}
+            clv={snapshot.clv}
+            onRebuild={async () => {
+              const c = await api.buildCard();
+              setSnapshot((p) => (p ? { ...p, card: c } : p));
+            }}
+          />
+        )}
         {tab === "sinais" && (
           <SignalsPage
             snapshot={snapshot}
@@ -108,9 +122,10 @@ export default function App() {
       </main>
 
       <nav className="tabbar">
-        {(["sinais", "backtest", "config"] as Tab[]).map((t) => (
+        {(["carta", "sinais", "backtest", "config"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-            {t === "sinais" ? "Sinais" : t === "backtest" ? "Backtest" : "Config"}
+            {t === "carta" ? "Carta" : t === "sinais" ? "Sinais"
+              : t === "backtest" ? "Backtest" : "Config"}
           </button>
         ))}
       </nav>

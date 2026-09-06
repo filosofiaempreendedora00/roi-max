@@ -52,6 +52,39 @@ backend/roimax/
 web/                        PWA React/TypeScript (desktop + mobile)
 ```
 
+### A carta do dia
+
+Uma vez por dia (padrão 16h de Brasília) o motor monta uma carta: as melhores
+entradas do dia, ordenadas, com stake calculado e **preço-limite**.
+
+Três coisas que a carta faz e uma varredura crua não faz:
+
+1. **Ordena e corta.** Vinte sinais fracos diluem a banca e enterram o que
+   importa. O padrão são 5 entradas.
+2. **Diversifica.** Máximo de 1 por jogo e 2 por liga — duas entradas no mesmo
+   jogo não são duas apostas, são uma com o dobro do tamanho.
+3. **Dá o preço-limite.** O preço se move entre o sinal e o seu toque. Abaixo
+   do limite (ou acima dele, num lay) a vantagem já foi embora. O limite vem
+   encaixado na escada de preços da Betfair, arredondado sempre a favor da
+   vantagem.
+
+A carta sai tarde de propósito: o backtest mostrou que o preço de abertura da
+Exchange é pior que o de fechamento, então quanto mais perto dos jogos,
+melhor o preço.
+
+### CLV: o painel de controle
+
+O app grava o preço de fechamento de cada palpite — de graça, aproveitando as
+varreduras que já acontecem — e mostra o seu **CLV real**.
+
+Isto não é enfeite. Com o volume de um apostador pessoal, o ROI leva anos para
+sair do ruído: no backtest, 17 apostas com odd média 4,85 deram ROI de −75%
+por puro azar. O CLV dá sinal em dezenas de apostas. Bater o fechamento em
+mais de 52% das entradas é o que sustenta lucro no longo prazo.
+
+Se o seu CLV real vier negativo, o remédio é filtro mais apertado, não mais
+volume.
+
 ### Os cinco detectores
 
 | Sinal | Dispara quando | Como agir |
@@ -141,9 +174,27 @@ exige contexto seguro). Um túnel Cloudflare gratuito resolve.
 ### Odds ao vivo
 
 Crie uma chave em `the-odds-api.com`, coloque em `ODDS_API_KEY` e ajuste a
-janela de operação em Config. Cada varredura custa 2 créditos por campeonato
-(mercados `h2h` + `h2h_lay`). Menos campeonatos selecionados significa
-varreduras mais frequentes.
+janela de operação em Config.
+
+Cada varredura custa **1 crédito por campeonato** no padrão (só `h2h`), ou 2
+se você ligar `include_lay`. Como as entradas da carta são para deixar rolar,
+o lay fica desligado: com 500 créditos/mês e uma varredura diária, isso são
+~16 campeonatos por dia em vez de 8.
+
+**Sobre quantas entradas esperar.** O backtest deu a fronteira honesta, com 12
+ligas e só o mercado 1X2:
+
+| EV mínimo | entradas/semana | CLV |
+|---|---|---|
+| 0,02 | 0,58 | +9,55% |
+| 0,01 | 1,13 | +5,55% |
+| 0,00 | 2,06 | +3,35% |
+| −0,02 | 7,21 | +0,35% |
+
+Mais cobertura multiplica isso proporcionalmente. Afrouxar o EV aumenta o
+volume e derruba a vantagem — em EV negativo ela desaparece. Não existe
+configuração que dê muito volume e muita vantagem ao mesmo tempo com dados
+gratuitos; ver `research/README.md`.
 
 ---
 

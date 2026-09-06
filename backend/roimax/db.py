@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from .config import settings
-from .models import CreditUsage, Event, PushSubscription, Quote, Signal
+from .models import CreditUsage, DailyCard, Event, Pick, PushSubscription, Quote, Signal
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -65,6 +65,26 @@ CREATE TABLE IF NOT EXISTS push_subs (
     p256dh      TEXT NOT NULL,
     auth        TEXT NOT NULL,
     label       TEXT,
+    ts          TEXT NOT NULL
+);
+
+-- palpites: o registro permanente, com preço de fechamento para medir CLV
+CREATE TABLE IF NOT EXISTS picks (
+    id              TEXT PRIMARY KEY,
+    payload         TEXT NOT NULL,
+    event_id        TEXT NOT NULL,
+    outcome         TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    commence_time   TEXT NOT NULL,
+    settled         INTEGER NOT NULL DEFAULT 0,
+    taken_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_picks_open ON picks(settled, commence_time);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_picks_unique ON picks(event_id, outcome, side);
+
+CREATE TABLE IF NOT EXISTS cards (
+    date        TEXT PRIMARY KEY,
+    payload     TEXT NOT NULL,
     ts          TEXT NOT NULL
 );
 
@@ -245,3 +265,65 @@ def kv_get(key: str, default: Any = None) -> Any:
 def kv_set(key: str, value: Any) -> None:
     with tx() as c:
         c.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?,?)", (key, json.dumps(value)))
+
+
+# ---------------------------------------------------------------- palpites
+
+def save_pick(pick: Pick) -> None:
+    """Grava ou atualiza. O índice único evita palpite duplicado no mesmo lance."""
+    with tx() as c:
+        c.execute(
+            """INSERT INTO picks (id, payload, event_id, outcome, side,
+                                  commence_time, settled, taken_at)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(event_id, outcome, side) DO UPDATE SET
+                 payload=excluded.payload, settled=excluded.settled""",
+            (pick.id, pick.model_dump_json(), pick.event_id, pick.outcome.value,
+             pick.side, _iso(pick.commence_time),
+             1 if pick.result else 0, _iso(pick.taken_at)),
+        )
+
+
+def open_picks() -> list[Pick]:
+    """Palpites de jogos que ainda não começaram — os que ainda podem ter o
+    preço de fechamento atualizado."""
+    rows = connect().execute(
+        "SELECT payload FROM picks WHERE settled=0 AND commence_time > ? ORDER BY commence_time",
+        (_iso(datetime.now(timezone.utc)),),
+    ).fetchall()
+    return [Pick.model_validate_json(r["payload"]) for r in rows]
+
+
+def all_picks(limit: int = 500) -> list[Pick]:
+    rows = connect().execute(
+        "SELECT payload FROM picks ORDER BY taken_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [Pick.model_validate_json(r["payload"]) for r in rows]
+
+
+def find_pick(event_id: str, outcome: str, side: str) -> Pick | None:
+    row = connect().execute(
+        "SELECT payload FROM picks WHERE event_id=? AND outcome=? AND side=?",
+        (event_id, outcome, side),
+    ).fetchone()
+    return Pick.model_validate_json(row["payload"]) if row else None
+
+
+# ----------------------------------------------------------------- cartas
+
+def save_card(card: DailyCard) -> None:
+    with tx() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO cards (date, payload, ts) VALUES (?,?,?)",
+            (card.date, card.model_dump_json(), _iso(card.generated_at)),
+        )
+
+
+def get_card(date: str) -> DailyCard | None:
+    row = connect().execute("SELECT payload FROM cards WHERE date=?", (date,)).fetchone()
+    return DailyCard.model_validate_json(row["payload"]) if row else None
+
+
+def latest_card() -> DailyCard | None:
+    row = connect().execute("SELECT payload FROM cards ORDER BY date DESC LIMIT 1").fetchone()
+    return DailyCard.model_validate_json(row["payload"]) if row else None

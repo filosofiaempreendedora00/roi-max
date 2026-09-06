@@ -132,6 +132,74 @@ class Signal(BaseModel):
         return self.expires_at is None or self.expires_at > utcnow()
 
 
+class Pick(BaseModel):
+    """Uma entrada que você de fato fez (ou pretende fazer).
+
+    Existe separado de `Signal` porque o sinal é efêmero e o palpite é o
+    registro permanente: é ele que carrega o preço de fechamento e permite
+    medir o CLV real, que é a única forma de saber se o método funciona antes
+    de acumular milhares de apostas.
+    """
+
+    id: str
+    signal_id: str
+    event_id: str
+    event_label: str
+    league: str = ""
+    market: str = "1X2"
+    outcome: Outcome
+    side: Side
+    taken_odds: float
+    fair_odds: float
+    ev: float
+    stake: float = 0.0
+    commence_time: datetime
+    taken_at: datetime = Field(default_factory=utcnow)
+
+    # preenchido pela última varredura antes do apito inicial
+    closing_odds: float | None = None
+    closing_at: datetime | None = None
+
+    result: str | None = None      # "WON" | "LOST" | None
+    pnl: float | None = None
+    placed: bool = False           # você confirmou na Betfair?
+
+    @property
+    def clv_pct(self) -> float | None:
+        """Quanto o preço tomado foi melhor que o de fechamento."""
+        if not self.closing_odds or self.closing_odds <= 1.0:
+            return None
+        if self.side == "back":
+            return (self.taken_odds / self.closing_odds - 1.0) * 100.0
+        return (self.closing_odds / self.taken_odds - 1.0) * 100.0
+
+    @property
+    def kicked_off(self) -> bool:
+        return self.commence_time <= utcnow()
+
+
+class CardEntry(BaseModel):
+    """Uma linha da carta do dia, já mastigada."""
+
+    signal: "Signal"
+    stake: float
+    limit_price: float             # back: preço mínimo. lay: preço máximo.
+    rank: int
+    reason: str
+
+
+class DailyCard(BaseModel):
+    """O que você abre uma vez por dia e executa."""
+
+    date: str
+    generated_at: datetime = Field(default_factory=utcnow)
+    entries: list[CardEntry] = Field(default_factory=list)
+    scanned_events: int = 0
+    bankroll: float = 0.0
+    total_stake: float = 0.0
+    note: str = ""
+
+
 class CreditUsage(BaseModel):
     provider: str
     endpoint: str

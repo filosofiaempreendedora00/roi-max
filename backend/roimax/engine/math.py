@@ -141,3 +141,40 @@ def mid_prob(back: float, lay: float) -> float:
     não o overround).
     """
     return (to_prob(back) + to_prob(lay)) / 2.0
+
+
+# ---------------------------------------------------------- escada da Betfair
+
+# A Betfair não aceita qualquer preço: existe uma escada de incrementos que
+# aumenta com a odd. Pedir 3.47 numa faixa de passo 0.05 é pedir um preço que
+# não existe.
+_LADDER = [
+    (2.0, 0.01), (3.0, 0.02), (4.0, 0.05), (6.0, 0.1), (10.0, 0.2),
+    (20.0, 0.5), (30.0, 1.0), (50.0, 2.0), (100.0, 5.0), (1000.0, 10.0),
+]
+
+
+def tick_size(odds: float) -> float:
+    for ceiling, step in _LADDER:
+        if odds < ceiling:
+            return step
+    return 10.0
+
+
+def snap_price(odds: float, side: str) -> float:
+    """Encaixa um preço na escada da Betfair, sempre a favor da vantagem.
+
+    Um preço-limite arredondado para o lado errado silenciosamente destrói o
+    edge: num back, aceitar 1.93 quando o equilíbrio é 1.935 é entrar com EV
+    negativo. Por isso back arredonda para CIMA e lay para BAIXO.
+    """
+    if odds <= 1.01:
+        return 1.01
+    step = tick_size(odds)
+    n = odds / step
+    # tolerância para não subir um degrau por erro de ponto flutuante
+    if side == "back":
+        k = math.floor(n) if abs(n - round(n)) < 1e-9 else math.ceil(n)
+    else:
+        k = math.ceil(n) if abs(n - round(n)) < 1e-9 else math.floor(n)
+    return round(max(1.01, k * step), 2)

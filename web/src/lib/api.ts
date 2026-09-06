@@ -1,4 +1,4 @@
-import type { BacktestResponse, ScanConfig, Snapshot } from "./types";
+import type { BacktestResponse, ClvStats, DailyCard, Pick, ScanConfig, Snapshot } from "./types";
 
 const TOKEN_KEY = "roimax.token";
 
@@ -36,6 +36,10 @@ export const api = {
     req<ScanConfig>("/api/config", { method: "PATCH", body: JSON.stringify(patch) }),
   backtest: (body: Record<string, unknown>) =>
     req<BacktestResponse>("/api/backtest", { method: "POST", body: JSON.stringify(body) }),
+  card: () => req<DailyCard>("/api/card"),
+  buildCard: () => req<DailyCard>("/api/card/build", { method: "POST" }),
+  clv: () => req<ClvStats & { por_liga: Record<string, { n: number; clv: number; bateu: number }>; palpites: Pick[] }>("/api/clv"),
+  markPlaced: (id: string) => req<{ ok: boolean }>(`/api/picks/${id}/placed`, { method: "POST" }),
   pushKey: () => fetch("/api/push/key").then((r) => r.json() as Promise<{ publicKey: string }>),
   pushSubscribe: (sub: Record<string, unknown>) =>
     req<{ ok: boolean }>("/api/push/subscribe", { method: "POST", body: JSON.stringify(sub) }),
@@ -47,7 +51,9 @@ export type WsEvent =
   | { type: "signals"; payload: Snapshot["signals"] }
   | { type: "status"; payload: Record<string, unknown> }
   | { type: "config"; payload: ScanConfig }
-  | { type: "acted"; payload: { signal_id: string } };
+  | { type: "acted"; payload: { signal_id: string } }
+  | { type: "card"; payload: DailyCard }
+  | { type: "pick"; payload: Pick };
 
 /**
  * Conexão persistente com reconexão exponencial. É ela que mantém desktop e

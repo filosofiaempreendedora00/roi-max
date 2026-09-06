@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, push
+from . import clv, dailycard, db, push
 from .budget import odds_api_budget
 from .config import ROOT, settings
 from .hub import hub
@@ -61,6 +61,8 @@ def _snapshot() -> dict:
     cfg = ScanConfig.load()
     return {
         "signals": [s.model_dump() for s in db.recent_signals(60)],
+        "card": (db.latest_card().model_dump() if db.latest_card() else None),
+        "clv": clv.stats().__dict__ | {"veredito": clv.stats().verdict},
         "budget": odds_api_budget.status().__dict__,
         "config": cfg.__dict__,
         "status": hub.status,
@@ -100,6 +102,53 @@ async def act(signal_id: str) -> dict:
     return {"ok": True}
 
 
+@app.get("/api/card", dependencies=[Depends(require_token)])
+async def card(date: str | None = None) -> dict:
+    c = db.get_card(date) if date else db.latest_card()
+    return c.model_dump() if c else {"date": None, "entries": [], "note": "Sem carta ainda."}
+
+
+@app.post("/api/card/build", dependencies=[Depends(require_token)])
+async def card_build() -> dict:
+    """Monta a carta agora, a partir dos sinais já em banco. Não gasta crédito."""
+    cfg = ScanConfig.load()
+    c = dailycard.build(
+        db.recent_signals(200),
+        cfg=dailycard.CardConfig(max_entries=cfg.card_max_entries,
+                                 bankroll=cfg.card_bankroll),
+        target_ev=cfg.card_target_ev,
+        scanned_events=len(db.upcoming_events(500)),
+    )
+    await hub.broadcast("card", c.model_dump())
+    return c.model_dump()
+
+
+@app.get("/api/clv", dependencies=[Depends(require_token)])
+async def clv_stats() -> dict:
+    picks = db.all_picks()
+    st = clv.stats(picks)
+    return {
+        "n": st.n, "n_com_fechamento": st.n_with_closing,
+        "clv_medio_pct": st.mean_clv, "bateu_o_fecho_pct": st.beat_rate,
+        "odd_media": st.mean_odds, "veredito": st.verdict,
+        "por_liga": clv.breakdown(picks),
+        "palpites": [p.model_dump() for p in picks[:100]],
+    }
+
+
+@app.post("/api/picks/{pick_id}/placed", dependencies=[Depends(require_token)])
+async def mark_placed(pick_id: str) -> dict:
+    """Você confirmou a entrada na Betfair. Só o que estiver marcado conta
+    no CLV real — palpite não executado mede o método, não o seu resultado."""
+    for p in db.all_picks():
+        if p.id == pick_id:
+            p.placed = True
+            db.save_pick(p)
+            await hub.broadcast("pick", p.model_dump())
+            return {"ok": True}
+    raise HTTPException(status_code=404, detail="palpite não encontrado")
+
+
 class ConfigPatch(BaseModel):
     sports: list[str] | None = None
     window_start: str | None = None
@@ -109,6 +158,12 @@ class ConfigPatch(BaseModel):
     min_ev_to_push: float | None = None
     cooldown_min: int | None = None
     thresholds: dict | None = None
+    card_enabled: bool | None = None
+    card_time: str | None = None
+    card_max_entries: int | None = None
+    card_bankroll: float | None = None
+    card_target_ev: float | None = None
+    include_lay: bool | None = None
 
 
 @app.patch("/api/config", dependencies=[Depends(require_token)])

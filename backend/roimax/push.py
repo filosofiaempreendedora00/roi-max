@@ -13,7 +13,7 @@ import logging
 
 from . import db
 from .config import settings
-from .models import Signal
+from .models import DailyCard, Signal
 
 log = logging.getLogger(__name__)
 
@@ -86,3 +86,44 @@ if __name__ == "__main__":
     print("Cole no seu .env:\n")
     print(f"VAPID_PUBLIC_KEY={pub}")
     print(f"VAPID_PRIVATE_KEY={priv}")
+
+
+def send_card(card: DailyCard) -> int:
+    """Uma notificação por dia, com a carta inteira. É a única que precisa
+    furar a tela bloqueada — as outras são ruído."""
+    if not settings.vapid_private_key or not card.entries:
+        return 0
+
+    import json as _json
+
+    from pywebpush import WebPushException, webpush
+
+    top = card.entries[0].signal
+    body = "\n".join(
+        f"{e.rank}. {e.signal.side.upper()} {e.signal.event_label} "
+        f"@ {e.signal.market_odds:.2f} (min {e.limit_price:.2f}) R$ {e.stake:.0f}"
+        for e in card.entries[:5]
+    )
+    payload = {
+        "title": f"Carta do dia: {len(card.entries)} entradas",
+        "body": body,
+        "tag": f"card-{card.date}",
+        "url": "/card",
+        "deeplink": top.deeplink,
+    }
+    sent = 0
+    for sub in db.all_subscriptions():
+        try:
+            webpush(
+                subscription_info={"endpoint": sub.endpoint,
+                                   "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
+                data=_json.dumps(payload),
+                vapid_private_key=settings.vapid_private_key,
+                vapid_claims={"sub": settings.vapid_subject},
+                ttl=6 * 3600,  # a carta vale o dia, não os cinco minutos
+            )
+            sent += 1
+        except WebPushException as exc:
+            if getattr(exc.response, "status_code", None) in (404, 410):
+                db.delete_subscription(sub.endpoint)
+    return sent

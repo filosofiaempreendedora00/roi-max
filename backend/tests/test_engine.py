@@ -223,3 +223,34 @@ def test_arbitragem_ignora_agregados():
     ]
     sigs = run_all(MarketBook(event=ev, quotes=quotes), Context())
     assert not [s for s in sigs if s.kind == SignalKind.ARBITRAGE]
+
+
+# ------------------------------------------------ escada de preços da Betfair
+
+def test_tick_size_cresce_com_a_odd():
+    assert m.tick_size(1.50) == 0.01
+    assert m.tick_size(2.50) == 0.02
+    assert m.tick_size(3.50) == 0.05
+    assert m.tick_size(5.00) == 0.1
+    assert m.tick_size(50.0) == 5.0
+
+
+def test_snap_back_arredonda_para_cima():
+    """Num back, aceitar menos que o equilíbrio entra com EV negativo."""
+    assert m.snap_price(1.935, "back") == 1.94
+    assert m.snap_price(3.47, "back") == 3.50
+
+
+def test_snap_lay_arredonda_para_baixo():
+    assert m.snap_price(1.935, "lay") == 1.93
+    assert m.snap_price(3.47, "lay") == 3.45
+
+
+def test_snap_preserva_preco_ja_valido():
+    for side in ("back", "lay"):
+        assert m.snap_price(2.50, side) == 2.50
+        assert m.snap_price(1.75, side) == 1.75
+
+
+def test_snap_respeita_o_minimo_da_betfair():
+    assert m.snap_price(1.001, "lay") == 1.01

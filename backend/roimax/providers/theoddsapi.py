@@ -31,13 +31,37 @@ SOFT_BOOKS = [
     "ladbrokes_uk", "coral", "paddypower", "skybet", "boylesports",
 ]
 
+# Cada campeonato custa 1 crédito por varredura (só back) ou 2 (com lay).
+# Com 500 créditos/mês e uma varredura diária, cabem ~16 campeonatos por dia
+# em modo back-only — contra 8 se pedirmos o lay junto. Como as entradas da
+# carta são back e "deixa rolar", o lay sai do padrão: dobrar a cobertura vale
+# mais do que ver o outro lado do book.
 DEFAULT_SPORTS = [
     "soccer_brazil_campeonato",
+    "soccer_brazil_serie_b",
     "soccer_epl",
+    "soccer_efl_champ",
     "soccer_spain_la_liga",
     "soccer_italy_serie_a",
     "soccer_germany_bundesliga",
+    "soccer_france_ligue_one",
+    "soccer_portugal_primeira_liga",
+    "soccer_netherlands_eredivisie",
     "soccer_uefa_champs_league",
+    "soccer_uefa_europa_league",
+    "soccer_conmebol_copa_libertadores",
+    "soccer_argentina_primera_division",
+]
+
+# O detector de divergência não sabe o que é futebol: compara preço com
+# consenso. Serve para qualquer esporte que a API cubra, sem modelo novo.
+OTHER_SPORTS = [
+    "tennis_atp_aus_open_singles",
+    "basketball_nba",
+    "basketball_euroleague",
+    "americanfootball_nfl",
+    "icehockey_nhl",
+    "mma_mixed_martial_arts",
 ]
 
 

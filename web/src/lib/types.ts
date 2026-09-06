@@ -37,6 +37,12 @@ export interface Budget {
 
 export interface ScanConfig {
   sports: string[];
+  card_enabled: boolean;
+  card_time: string;
+  card_max_entries: number;
+  card_bankroll: number;
+  card_target_ev: number;
+  include_lay: boolean;
   window_start: string;
   window_end: string;
   enabled: boolean;
@@ -46,8 +52,50 @@ export interface ScanConfig {
   thresholds: Record<string, number>;
 }
 
+export interface CardEntry {
+  signal: Signal;
+  stake: number;
+  limit_price: number;
+  rank: number;
+  reason: string;
+}
+
+export interface DailyCard {
+  date: string;
+  generated_at: string;
+  entries: CardEntry[];
+  scanned_events: number;
+  bankroll: number;
+  total_stake: number;
+  note: string;
+}
+
+export interface ClvStats {
+  n: number;
+  n_with_closing: number;
+  mean_clv: number;
+  beat_rate: number;
+  mean_odds: number;
+  veredito: string;
+}
+
+export interface Pick {
+  id: string;
+  event_label: string;
+  league: string;
+  outcome: Outcome;
+  side: Side;
+  taken_odds: number;
+  closing_odds: number | null;
+  stake: number;
+  placed: boolean;
+  commence_time: string;
+}
+
 export interface Snapshot {
   signals: Signal[];
+  card: DailyCard | null;
+  clv: ClvStats;
   budget: Budget;
   config: ScanConfig;
   status: string;
