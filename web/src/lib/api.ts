@@ -9,15 +9,19 @@ export function setToken(t: string): void {
   localStorage.setItem(TOKEN_KEY, t);
 }
 
+/** Só o WebSocket usa o token na URL: o handshake não aceita headers. */
 function qs(extra: Record<string, string> = {}): string {
   return new URLSearchParams({ token: getToken(), ...extra }).toString();
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const sep = path.includes("?") ? "&" : "?";
-  const r = await fetch(`${path}${sep}${qs()}`, {
+  const r = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Token": getToken(),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json() as Promise<T>;

@@ -93,7 +93,7 @@ class Scanner:
         history = {}
         for b in books:
             for q in b.quotes:
-                if not q.bookmaker.startswith("betfair"):
+                if not q.bookmaker.startswith("betfair_ex"):
                     continue
                 key = (b.event.id, q.bookmaker, q.outcome.value)
                 if key not in history:

@@ -33,6 +33,12 @@ from .math import (
 
 ORDER = [Outcome.HOME, Outcome.DRAW, Outcome.AWAY]
 
+# Colunas derivadas do histórico (média e máxima do mercado) não são opiniões
+# independentes: são agregados das mesmas casas que já estão na lista. A máxima,
+# em particular, tem overround artificialmente baixo — entra no consenso como
+# se fosse uma casa generosa e inventa valor que não existe.
+AGGREGATE_BOOKS = {"market_max", "market_avg"}
+
 
 @dataclass
 class Thresholds:
@@ -83,7 +89,7 @@ def build_consensus(book: MarketBook, exclude_prefix: str = "betfair") -> Consen
     per_book: list[list[float]] = []
     names: list[str] = []
     for bk in book.bookmakers:
-        if bk.startswith(exclude_prefix):
+        if bk.startswith(exclude_prefix) or bk in AGGREGATE_BOOKS:
             continue
         quotes = book.by_bookmaker(bk)
         odds = [quotes[o].back for o in ORDER if o in quotes and quotes[o].back]
@@ -145,14 +151,16 @@ def detect_value(book: MarketBook, ctx: Context) -> list[Signal]:
 
     conf = _confidence(cons, t)
     out: list[Signal] = []
-    bk_name = next((b for b in book.bookmakers if b.startswith("betfair")), "betfair")
+    bk_name = next((b for b in book.bookmakers if b.startswith("betfair_ex")), "betfair_ex")
 
     for oc in ORDER:
         q = exch.get(oc)
-        if not q or not q.back or not q.lay:
+        if not q or not q.back:
             continue
-        if spread_pct(q.back, q.lay) > t.max_spread_pct:
-            continue  # book fino: o preço não é confiável nem executável
+        # book fino: o preço não é confiável nem executável. Só dá para medir
+        # quando os dois lados são conhecidos (no histórico, o lay não existe).
+        if q.lay and spread_pct(q.back, q.lay) > t.max_spread_pct:
+            continue
 
         p_fair = cons.probs[oc]
         fair = to_odds(p_fair)
@@ -173,6 +181,8 @@ def detect_value(book: MarketBook, ctx: Context) -> list[Signal]:
             continue
 
         # LAY: quero pagar MENOS do que o justo
+        if not q.lay:
+            continue
         e_lay = -edge_pct(fair, q.lay)
         ev_l = ev_lay(p_fair, q.lay, ctx.commission)
         if e_lay >= t.min_edge_pct and ev_l >= t.min_ev:
@@ -194,8 +204,8 @@ def detect_arbitrage(book: MarketBook, ctx: Context) -> list[Signal]:
     t = ctx.thresholds
     best: dict[Outcome, tuple[float, str]] = {}
     for q in book.quotes:
-        if not q.back:
-            continue
+        if not q.back or q.bookmaker in AGGREGATE_BOOKS:
+            continue  # a máxima do mercado somaria < 1 sempre: arb fantasma
         cur = best.get(q.outcome)
         if cur is None or q.back > cur[0]:
             best[q.outcome] = (q.back, q.bookmaker)

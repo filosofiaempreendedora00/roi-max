@@ -79,12 +79,20 @@ class MarketBook(BaseModel):
         return seen
 
     def exchange_book(self) -> dict[Outcome, Quote]:
-        """O book da primeira exchange Betfair encontrada."""
+        """O book da Betfair Exchange.
+
+        Casa o prefixo `betfair_ex` e não apenas `betfair`, senão a sportsbook
+        da Betfair (`betfair_sb_*`) seria confundida com a exchange.
+
+        Basta ter preço de back: no histórico só existe o back, e exigir os
+        dois lados aqui zeraria o backtest inteiro.
+        """
         for bk in self.bookmakers:
-            if bk.startswith("betfair"):
-                book = self.by_bookmaker(bk)
-                if any(q.is_exchange for q in book.values()):
-                    return book
+            if not bk.startswith("betfair_ex"):
+                continue
+            book = self.by_bookmaker(bk)
+            if any(q.back for q in book.values()):
+                return book
         return {}
 
 

@@ -160,3 +160,66 @@ def test_steam_detecta_movimento():
     sigs = run_all(book, ctx)
     steam = [s for s in sigs if s.kind == SignalKind.STEAM]
     assert steam and steam[0].edge_pct > 6
+
+
+# ---------------------------------- regressões das correções pós-revisão
+
+def test_exchange_so_com_back_ainda_gera_sinal():
+    """No histórico só existe o preço de back — o motor não pode ficar cego.
+
+    Exigir os dois lados aqui zerava o backtest inteiro.
+    """
+    ev = Event(id="e1", home="Flamengo", away="Palmeiras",
+               commence_time=datetime.now(timezone.utc) + timedelta(hours=2))
+    quotes = [Quote(event_id="e1", bookmaker="betfair_ex", outcome=Outcome.HOME,
+                    back=2.60, lay=None)]
+    for name, trio in BALANCED.items():
+        for oc, price in trio.items():
+            quotes.append(Quote(event_id="e1", bookmaker=name, outcome=oc, back=price))
+    book = MarketBook(event=ev, quotes=quotes)
+
+    assert book.exchange_book(), "book da exchange não pode sumir sem o lay"
+    backs = [s for s in run_all(book, Context()) if s.kind == SignalKind.VALUE_BACK]
+    assert backs and backs[0].outcome == Outcome.HOME
+
+
+def test_sportsbook_da_betfair_nao_e_confundida_com_a_exchange():
+    ev = Event(id="e1", home="A", away="B",
+               commence_time=datetime.now(timezone.utc) + timedelta(hours=2))
+    quotes = [
+        Quote(event_id="e1", bookmaker="betfair_sb_uk", outcome=Outcome.HOME, back=2.60),
+        Quote(event_id="e1", bookmaker="betfair_ex_uk", outcome=Outcome.HOME,
+              back=2.10, lay=2.14),
+    ]
+    book = MarketBook(event=ev, quotes=quotes)
+    exch = book.exchange_book()
+    assert exch[Outcome.HOME].back == 2.10  # a exchange, não a sportsbook
+
+
+def test_agregados_ficam_fora_do_consenso():
+    """`market_max` não é uma casa: é a máxima das outras, e infla o justo."""
+    ev = Event(id="e1", home="A", away="B",
+               commence_time=datetime.now(timezone.utc) + timedelta(hours=2))
+    quotes = []
+    for name, trio in BALANCED.items():
+        for oc, price in trio.items():
+            quotes.append(Quote(event_id="e1", bookmaker=name, outcome=oc, back=price))
+    for oc, price in {Outcome.HOME: 2.30, Outcome.DRAW: 3.60, Outcome.AWAY: 4.10}.items():
+        quotes.append(Quote(event_id="e1", bookmaker="market_max", outcome=oc, back=price))
+
+    cons = build_consensus(MarketBook(event=ev, quotes=quotes))
+    assert cons is not None
+    assert "market_max" not in cons.books
+    assert cons.n_books == 4
+
+
+def test_arbitragem_ignora_agregados():
+    """A máxima do mercado soma < 1 por construção: seria arb fantasma."""
+    ev = Event(id="e1", home="A", away="B",
+               commence_time=datetime.now(timezone.utc) + timedelta(hours=2))
+    quotes = [
+        Quote(event_id="e1", bookmaker="market_max", outcome=oc, back=p)
+        for oc, p in {Outcome.HOME: 3.60, Outcome.DRAW: 4.40, Outcome.AWAY: 5.20}.items()
+    ]
+    sigs = run_all(MarketBook(event=ev, quotes=quotes), Context())
+    assert not [s for s in sigs if s.kind == SignalKind.ARBITRAGE]

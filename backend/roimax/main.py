@@ -6,7 +6,9 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,8 +43,17 @@ app.add_middleware(
 )
 
 
-def require_token(token: str = Query(default="")) -> None:
-    if token != settings.roimax_token:
+def require_token(
+    token: str = Query(default=""),
+    x_token: str = Header(default="", alias="X-Token"),
+) -> None:
+    """Aceita o token por header ou por query.
+
+    O header é o caminho normal — token em query string vai parar no log de
+    acesso do servidor. A query fica só para o WebSocket, porque o navegador
+    não deixa definir headers no handshake.
+    """
+    if settings.roimax_token not in (token, x_token):
         raise HTTPException(status_code=401, detail="token inválido")
 
 
