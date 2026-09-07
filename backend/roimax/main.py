@@ -65,10 +65,14 @@ def require_token(
 
 def _snapshot() -> dict:
     cfg = ScanConfig.load()
+    # cada consulta a mais é uma ida ao Postgres: chamar duas vezes o mesmo
+    # dado dobra a latência da tela à toa
+    card = db.latest_card()
+    clv_stats = clv.stats()
     return {
         "signals": [s.model_dump() for s in db.recent_signals(60)],
-        "card": (db.latest_card().model_dump() if db.latest_card() else None),
-        "clv": clv.stats().__dict__ | {"veredito": clv.stats().verdict},
+        "card": card.model_dump() if card else None,
+        "clv": clv_stats.__dict__ | {"veredito": clv_stats.verdict},
         "budget": odds_api_budget.status().__dict__,
         "config": cfg.__dict__,
         "status": hub.status,

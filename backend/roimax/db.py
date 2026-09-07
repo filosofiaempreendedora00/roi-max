@@ -138,16 +138,20 @@ def connect() -> Engine:
         kwargs: dict[str, Any] = {"future": True}
         if url.startswith("sqlite"):
             kwargs["connect_args"] = {"check_same_thread": False}
-        elif _is_transaction_pooler(url):
-            # o pooler externo já gerencia conexões: um pool nosso por cima
-            # só atrapalha. E prepared statements têm que sair de cena.
-            from sqlalchemy.pool import NullPool
-            kwargs.update(poolclass=NullPool,
-                          connect_args={"prepare_threshold": None})
         else:
-            # serverless abre e fecha conexão o tempo todo; sem pre_ping a
-            # função herda um socket morto do pool e falha na primeira query
-            kwargs.update(pool_pre_ping=True, pool_size=1, max_overflow=2)
+            # Abrir conexão com Postgres remoto custa ~1,6s. Sem pool, cada
+            # operação paga isso — e uma única tela chama o banco várias
+            # vezes, o que vira dezenas de segundos e estoura tudo. Mesmo em
+            # serverless vale manter pool: a função é reaproveitada enquanto
+            # está quente, e o pre_ping descarta socket morto entre uma
+            # invocação e outra.
+            kwargs.update(pool_pre_ping=True, pool_size=5, max_overflow=10,
+                          pool_recycle=280, pool_timeout=20)
+            if _is_transaction_pooler(url):
+                # No modo transação a conexão é reatribuída a cada transação,
+                # então um prepared statement criado numa não existe na
+                # seguinte. O psycopg cria isso sozinho por padrão.
+                kwargs["connect_args"] = {"prepare_threshold": None}
         _engine = create_engine(url, **kwargs)
         metadata.create_all(_engine)
     return _engine
