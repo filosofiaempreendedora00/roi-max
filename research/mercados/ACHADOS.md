@@ -64,3 +64,49 @@ python research/mercados/coletor.py 10 40   # 40 fotos, ~6,7 horas
 ```
 
 As fotos ficam em `research/mercados/snapshots/` (fora do repositório).
+
+---
+
+## Correção: minha primeira comparação com ordens de compra estava errada
+
+Ao cruzar o menor anúncio do Waxpeer com a maior ordem de compra do
+market.csgo por **nome**, apareceram spreads de 120% a 300% em itens
+líquidos. Bom demais para ser verdade, e era.
+
+**Causa:** um mesmo `market_hash_name` esconde dezenas de variantes.
+
+- `★ Flip Knife | Doppler (Factory New)` tem **93 variantes**. A Ruby vale
+  US$ 1.807; a Phase 1, US$ 390. Eu comparava um anúncio de fase comum com a
+  ordem de compra da Ruby.
+- `AK-47 | Redline (Field-Tested)` tem **435 variantes** — combinações de
+  adesivos, de US$ 39 a US$ 270.
+
+## O achado que sobra, e ele é o mais importante
+
+Medindo a dispersão de preço **dentro de um mesmo nome** (15.242 itens com 5+
+variantes):
+
+| | O mais caro vale |
+|---|---|
+| p25 | 2,0x o mais barato |
+| **mediana** | **4,9x** |
+| p75 | 15,2x |
+| p90 | 60,7x |
+
+**Feeds de preço por nome — Waxpeer, agregadores, quase todos — colapsam isso
+num número só.** A assimetria não está entre praças. Está entre o que o
+anúncio *é* e o que o feed *acha* que ele é.
+
+É exatamente a situação do Ragnarok: o vendedor não sabe o que tem.
+
+## Oportunidade determinística verificada
+
+Anúncio abaixo da ordem de compra da **mesma variante** (comparação válida,
+mesmo `class_instance` dos dois lados):
+
+- 400 casos em 347.812 variantes (0,11%)
+- Após 7% de taxa: 217 lucrativos
+- **Lucro somado: US$ 80 · capital US$ 523 · retorno 15,3%**
+
+Retorno alto, valor absoluto pequeno. É o tamanho da janela num instante — e
+é justamente o tipo de oportunidade pequena demais para uma empresa perseguir.
