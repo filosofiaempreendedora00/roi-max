@@ -369,14 +369,42 @@ async def ws_endpoint(ws: WebSocket, token: str = Query(default="")):
 # ------------------------------------------------------------- estáticos
 
 if WEB_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")
+    # Os arquivos em /assets têm hash no nome: mudou o conteúdo, mudou o nome.
+    # Então podem ser guardados para sempre, sem risco de servir versão velha.
+    app.mount(
+        "/assets",
+        StaticFiles(directory=WEB_DIST / "assets"),
+        name="assets",
+    )
+
+    # O index.html é o oposto: o nome nunca muda e ele aponta para os assets
+    # com hash. Se o navegador guardar uma versão antiga, ela vai pedir um
+    # arquivo que não existe mais e a tela fica EM BRANCO — a cada deploy.
+    NUNCA_CACHEAR = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+    @app.middleware("http")
+    async def cache_headers(request, call_next):
+        resposta = await call_next(request)
+        caminho = request.url.path
+        if caminho.startswith("/assets/"):
+            resposta.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif caminho.startswith("/api/"):
+            resposta.headers["Cache-Control"] = "no-store"
+        else:
+            # index.html, sw.js e manifest: sempre revalidar. Um service
+            # worker preso em versão velha é dos bugs mais difíceis de
+            # diagnosticar depois.
+            resposta.headers.setdefault("Cache-Control",
+                                        "no-cache, no-store, must-revalidate")
+        return resposta
 
     @app.get("/{full_path:path}")
     async def spa(full_path: str):
         candidate = WEB_DIST / full_path
         if full_path and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(WEB_DIST / "index.html")
+            headers = None if candidate.suffix in (".png", ".ico") else NUNCA_CACHEAR
+            return FileResponse(candidate, headers=headers)
+        return FileResponse(WEB_DIST / "index.html", headers=NUNCA_CACHEAR)
 
 else:
     # Sem a PWA compilada a API funciona, mas a tela não existe. Melhor dizer
