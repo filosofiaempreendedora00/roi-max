@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, connect, getToken, type WsEvent } from "./lib/api";
+import { api, connect, getToken, setToken, type WsEvent } from "./lib/api";
 import { registerServiceWorker } from "./lib/push";
 import { BacktestPage } from "./pages/Backtest";
 import { CardPage } from "./pages/Card";
@@ -164,16 +164,37 @@ export default function App() {
 
 function TokenGate({ message }: { message: string }) {
   const [t, setT] = useState("");
+  const recusado = message.includes("401");
+
+  const entrar = () => {
+    if (!t.trim()) return;
+    setToken(t);
+    location.reload();
+  };
+
   return (
     <div className="gate">
       <h1>ROI Max</h1>
-      <p className="muted">{message}</p>
-      <input type="password" placeholder="token do servidor" value={t}
-             onChange={(e) => setT(e.target.value)} />
-      <button className="btn primary" onClick={() => {
-        localStorage.setItem("roimax.token", t);
-        location.reload();
-      }}>Entrar</button>
+      <p className="muted">
+        {recusado
+          ? "Token recusado pelo servidor. Confira se copiou inteiro."
+          : "Digite o token para conectar."}
+      </p>
+      <input
+        type="password"
+        placeholder="token do servidor"
+        value={t}
+        autoFocus
+        onChange={(e) => setT(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && entrar()}
+      />
+      <button className="btn primary" onClick={entrar} disabled={!t.trim()}>
+        Entrar
+      </button>
+      <p className="hint">
+        É o <code>ROIMAX_TOKEN</code> do seu <code>.env</code>, o mesmo que está
+        nas variáveis da Vercel. Fica salvo neste aparelho.
+      </p>
     </div>
   );
 }

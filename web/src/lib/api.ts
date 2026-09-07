@@ -3,10 +3,13 @@ import type { BacktestResponse, ClvStats, DailyCard, Pick, ScanConfig, Snapshot 
 const TOKEN_KEY = "roimax.token";
 
 export function getToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? "";
+  return (localStorage.getItem(TOKEN_KEY) ?? "").trim();
 }
 export function setToken(t: string): void {
-  localStorage.setItem(TOKEN_KEY, t);
+  // Copiar e colar traz espaço e quebra de linha junto o tempo todo. Sem
+  // aparar, a autenticação falha e a tela de token volta — parecendo que
+  // nada foi salvo.
+  localStorage.setItem(TOKEN_KEY, t.trim());
 }
 
 /** Só o WebSocket usa o token na URL: o handshake não aceita headers. */
