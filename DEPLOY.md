@@ -167,11 +167,33 @@ histórico de créditos e cotações já coletados):
 ./scripts/db_copy.py "postgresql://...sua-url-da-neon..."
 ```
 
+## Diagnóstico rápido
+
+`/api/health` responde sem token e diz o que está errado:
+
+```bash
+curl https://SEU-APP.vercel.app/api/health
+```
+
+```json
+{"ok": true, "banco": "postgres/pooler", "banco_ok": true, "erro": null,
+ "live_odds": true, "push_configurado": true, "serverless": true,
+ "regiao": "iad1", "interface_compilada": true}
+```
+
+- `banco_ok: false` → veja `erro`, quase sempre é a `DATABASE_URL`
+- `live_odds: false` → a `ODDS_API_KEY` não chegou
+- `interface_compilada: false` → o build do frontend não rodou
+- `regiao` → confirme que é a mesma do banco; longe dele é latência à toa
+
 ## Se der problema
 
 | Sintoma | Causa provável |
 |---|---|
-| `FUNCTION_INVOCATION_FAILED` | `DATABASE_URL` errada, ou banco suspenso — abra o painel uma vez para acordar |
+| `FUNCTION_INVOCATION_FAILED` logo após o deploy | Algo estourou durante o import do módulo. Em serverless o disco é somente leitura: qualquer escrita fora de `/tmp` derruba a função antes do app carregar, e o erro sai mudo |
+| `FUNCTION_INVOCATION_FAILED` em uso | `DATABASE_URL` errada, ou banco suspenso — abra o painel uma vez para acordar |
+| `Failed to load Builders` no build | Versão de builder fixada no `vercel.json`. Não fixe: a Vercel resolve o runtime sozinha |
+| A Vercel ignora suas rewrites e o diretório `/api` | Ela detectou um preset de framework Python pelo `requirements.txt`, e o preset tem precedência sobre funções em arquivo. Use o entrypoint na raiz (`app.py`) |
 | Timeout ou "connection refused" no Supabase | Você usou a conexão direta (IPv6). Troque pela `Transaction pooler`, porta 6543 |
 | `prepared statement ... does not exist` | URL do pooler não reconhecida. Confira que ela tem `:6543` ou `pooler.supabase.com` |
 | `live_odds: false` | `ODDS_API_KEY` não chegou nas variáveis da Vercel |
