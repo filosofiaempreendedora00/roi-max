@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -12,6 +13,21 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ROOT / ".env", env_file_encoding="utf-8", extra="ignore"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _vazio_e_o_mesmo_que_ausente(cls, values):
+        """Painéis de nuvem criam variáveis com valor vazio o tempo todo.
+
+        Sem isto, um `BETFAIR_COMMISSION=` em branco faz o pydantic tentar
+        converter "" para número e derrubar a aplicação na inicialização — que
+        na Vercel aparece só como FUNCTION_INVOCATION_FAILED, sem pista do
+        motivo. Vazio passa a significar "usa o padrão".
+        """
+        if isinstance(values, dict):
+            return {k: v for k, v in values.items()
+                    if not (isinstance(v, str) and v.strip() == "")}
+        return values
 
     # --- provedores de dados ---
     odds_api_key: str = ""

@@ -70,3 +70,33 @@ def test_kv_guarda_estrutura():
     db.kv_set("cfg", {"a": [1, 2], "b": "x"})
     assert db.kv_get("cfg") == {"a": [1, 2], "b": "x"}
     assert db.kv_get("inexistente", "padrao") == "padrao"
+
+
+# ------------------------------------------- configuração vinda de painel
+
+def test_variavel_vazia_usa_o_padrao(monkeypatch):
+    """Painel de nuvem cria variável em branco o tempo todo. Sem tolerar isso,
+    o app morre na inicialização com erro que não diz nada."""
+    from roimax.config import Settings
+    for k in ("ODDS_API_MONTHLY_CREDITS", "BETFAIR_COMMISSION",
+              "APIFOOTBALL_KEY", "DATABASE_URL"):
+        monkeypatch.setenv(k, "")
+    s = Settings(_env_file=None)
+    assert s.odds_api_monthly_credits == 500
+    assert s.betfair_commission == 0.065
+    assert s.database_url == ""
+
+
+def test_variavel_com_espacos_tambem_conta_como_vazia(monkeypatch):
+    from roimax.config import Settings
+    monkeypatch.setenv("BETFAIR_COMMISSION", "   ")
+    assert Settings(_env_file=None).betfair_commission == 0.065
+
+
+def test_valor_de_verdade_sobrescreve(monkeypatch):
+    from roimax.config import Settings
+    monkeypatch.setenv("ODDS_API_MONTHLY_CREDITS", "20000")
+    monkeypatch.setenv("BETFAIR_COMMISSION", "0.02")
+    s = Settings(_env_file=None)
+    assert s.odds_api_monthly_credits == 20000
+    assert s.betfair_commission == 0.02
