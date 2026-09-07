@@ -1,11 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd web && npm install && npm run build",
-  "outputDirectory": "web/dist",
   "functions": {
-    "api/index.py": { "runtime": "@vercel/python@4.3.0", "maxDuration": 60 }
-  },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index" }
-  ]
+    "app.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{backend/tests/**,research/**,desktop/**,data/**,scripts/**,web/node_modules/**,web/src/**,**/test_*.py}"
+    }
+  }
 }

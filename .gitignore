@@ -4,13 +4,20 @@ __pycache__/
 venv/
 .env
 node_modules/
-dist/
-data/*.db
-data/*.db-*
-data/cache/
-data/historical/
 .DS_Store
 *.egg-info/
 tsconfig.tsbuildinfo
-desktop/node_modules/
+
+# banco e dados locais nunca vão para o repositório
+data/
+*.db
+*.db-*
+
+# artefatos de build do app de Mac (233MB)
 desktop/dist/
+
+# saída da CLI da Vercel
+.vercel/
+
+# web/dist NÃO está ignorado de propósito: é a PWA compilada, e serve de
+# rede de segurança caso o build do frontend não rode na Vercel.

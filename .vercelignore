@@ -1,0 +1,8 @@
+# Fora do envio para a Vercel: nada disto roda na nuvem.
+desktop/
+research/
+data/
+web/node_modules/
+.venv/
+*.db
+*.db-*

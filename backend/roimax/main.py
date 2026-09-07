@@ -336,3 +336,14 @@ if WEB_DIST.exists():
         if full_path and candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(WEB_DIST / "index.html")
+
+else:
+    # Sem a PWA compilada a API funciona, mas a tela não existe. Melhor dizer
+    # isso do que devolver um 404 seco que não explica nada.
+    @app.get("/{full_path:path}")
+    async def sem_interface(full_path: str) -> dict:
+        return {
+            "erro": "A interface não foi compilada neste deploy.",
+            "como_resolver": "Rode 'cd web && npm run build' e publique de novo.",
+            "api": "Os endpoints em /api continuam funcionando normalmente.",
+        }
