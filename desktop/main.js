@@ -68,6 +68,14 @@ function buildMenu() {
         { label: "Configurar servidor…", accelerator: "Cmd+,", click: askServerUrl },
         { type: "separator" },
         { label: "Recarregar", accelerator: "Cmd+R", click: () => win.reload() },
+        {
+          // Depois de um deploy, o index.html em cache aponta para arquivos
+          // que já não existem e a janela fica em branco. Este é o botão de
+          // emergência para isso.
+          label: "Recarregar ignorando cache",
+          accelerator: "Cmd+Shift+R",
+          click: () => win.webContents.reloadIgnoringCache(),
+        },
         { type: "separator" },
         { role: "close" },
       ],
@@ -101,6 +109,24 @@ function createWindow() {
   });
 
   win.once("ready-to-show", () => win.show());
+
+  // Tela em branco depois de um deploy é quase sempre index.html velho em
+  // cache. Se o app carregar e não renderizar nada, recarrega ignorando o
+  // cache uma vez, sozinho — em vez de deixar a janela branca sem explicação.
+  win.webContents.on("did-finish-load", async () => {
+    if (!readConfig().serverUrl) return;
+    try {
+      const vazio = await win.webContents.executeJavaScript(
+        "(document.getElementById('root')?.innerHTML?.length ?? 0) === 0"
+      );
+      if (vazio && !win.__jaRecarregou) {
+        win.__jaRecarregou = true;
+        win.webContents.reloadIgnoringCache();
+      }
+    } catch {
+      /* página de configuração não tem #root: nada a fazer */
+    }
+  });
   win.on("close", () => writeConfig({ bounds: win.getBounds() }));
 
   // Qualquer link para fora (Betfair, the-odds-api) abre no navegador padrão.
