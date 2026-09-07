@@ -21,3 +21,4 @@ desktop/dist/
 
 # web/dist NÃO está ignorado de propósito: é a PWA compilada, e serve de
 # rede de segurança caso o build do frontend não rode na Vercel.
+research/mercados/snapshots/
