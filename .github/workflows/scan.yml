@@ -1,0 +1,80 @@
+# Agendador do ROI Max.
+#
+# A Vercel é serverless: não existe processo que fique vivo varrendo odds. O
+# GitHub Actions faz esse papel de graça — acorda no horário, chama a API do
+# app e some. Nenhum segredo fica no código: vêm de
+# Settings -> Secrets and variables -> Actions.
+
+name: Varredura de odds
+
+on:
+  schedule:
+    # horários em UTC. O Brasil está em UTC-3.
+    - cron: "0 14 * * *"   # 11h de Brasília — varre e atualiza preços
+    - cron: "0 19 * * *"   # 16h — monta a carta do dia
+    - cron: "0 22 * * *"   # 19h — captura preço perto dos jogos, para o CLV
+  workflow_dispatch:
+    inputs:
+      montar_carta:
+        description: "Montar a carta do dia nesta execução"
+        type: boolean
+        default: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decidir se monta a carta
+        id: decidir
+        env:
+          AGENDA: ${{ github.event.schedule }}
+          MANUAL: ${{ inputs.montar_carta }}
+        run: |
+          # No disparo manual não existe `schedule`, então quem manda é o
+          # input — senão testar na mão nunca mostraria uma carta.
+          if [ -n "$AGENDA" ]; then
+            if [ "$AGENDA" = "0 19 * * *" ]; then BUILD=true; else BUILD=false; fi
+          else
+            BUILD="${MANUAL:-true}"
+          fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "Montar carta: $BUILD"
+
+      - name: Chamar a varredura
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          BUILD: ${{ steps.decidir.outputs.build }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Faltam os secrets APP_URL e/ou CRON_SECRET."
+            exit 1
+          fi
+
+          code=$(curl -sS -o /tmp/out.json -w "%{http_code}" \
+            -X POST "${APP_URL%/}/api/cron/scan?build_card=$BUILD" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            --max-time 120 --retry 2 --retry-delay 10)
+
+          echo "Resposta (HTTP $code):"
+          cat /tmp/out.json; echo
+
+          if [ "$code" != "200" ]; then
+            echo "::error::A varredura falhou com HTTP $code"
+            exit 1
+          fi
+
+          # deixa o resumo visível na página da execução
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("/tmp/out.json"))
+          o = d.get("orcamento", {})
+          print("## Varredura concluída\n")
+          print(f"- Sinais encontrados: **{d.get('sinais', 0)}**")
+          print(f"- Créditos: **{o.get('used')}/{o.get('monthly')}** "
+                f"({o.get('remaining')} restantes)")
+          if "carta" in d:
+              c = d["carta"]
+              print(f"- Carta do dia: **{c.get('entradas')} entradas**, "
+                    f"R$ {c.get('stake_total')} no total")
+          PY
