@@ -31,10 +31,16 @@ WEB_DIST = ROOT / "web" / "dist"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.connect()
-    task = asyncio.create_task(scanner.run_forever())
+    task = None
+    if settings.is_serverless:
+        # a varredura vem de fora, por /api/cron/scan
+        log.info("modo serverless: agendador interno desligado")
+    else:
+        task = asyncio.create_task(scanner.run_forever())
     log.info("ROI Max no ar — odds ao vivo: %s", settings.has_live_odds)
     yield
-    task.cancel()
+    if task:
+        task.cancel()
 
 
 app = FastAPI(title="ROI Max", version="0.1.0", lifespan=lifespan)
@@ -181,6 +187,41 @@ async def budget() -> dict:
     return odds_api_budget.status().__dict__
 
 
+# ------------------------------------------------------------------- cron
+
+def require_cron(secret: str = Query(default=""),
+                 x_cron: str = Header(default="", alias="X-Cron-Secret")) -> None:
+    """O agendador externo usa segredo próprio, não o token do app.
+
+    Separado de propósito: o token do app fica no navegador do celular, e um
+    endpoint que gasta crédito não deve ser disparável por quem tem só isso.
+    """
+    expected = settings.cron_secret or settings.roimax_token
+    if expected not in (secret, x_cron):
+        raise HTTPException(status_code=401, detail="segredo de cron inválido")
+
+
+@app.post("/api/cron/scan", dependencies=[Depends(require_cron)])
+async def cron_scan(build_card: bool = False) -> dict:
+    """Chamado pelo agendador externo. Varre, atualiza fechamentos e,
+    opcionalmente, monta a carta do dia."""
+    cfg = ScanConfig.load()
+    sigs = await scanner.scan_once(cfg)
+    out: dict = {"sinais": len(sigs), "orcamento": odds_api_budget.status().__dict__}
+    if build_card:
+        c = dailycard.build(
+            db.recent_signals(200),
+            cfg=dailycard.CardConfig(max_entries=cfg.card_max_entries,
+                                     bankroll=cfg.card_bankroll),
+            target_ev=cfg.card_target_ev,
+            scanned_events=len(db.upcoming_events(500)),
+        )
+        if cfg.push_enabled and c.entries:
+            push.send_card(c)
+        out["carta"] = {"entradas": len(c.entries), "stake_total": c.total_stake}
+    return out
+
+
 # ------------------------------------------------------------------ push
 
 @app.get("/api/push/key")
@@ -224,9 +265,17 @@ class BacktestRequest(BaseModel):
 
 @app.post("/api/backtest", dependencies=[Depends(require_token)])
 async def backtest(req: BacktestRequest) -> dict:
-    from .backtest.replay import baseline_closing_line, run_backtest
-    from .engine.detectors import Context, Thresholds
-    from .providers.footballdata_uk import load_extra, load_main
+    try:
+        from .backtest.replay import baseline_closing_line, run_backtest
+        from .engine.detectors import Context, Thresholds
+        from .providers.footballdata_uk import load_extra, load_main
+    except ImportError:
+        # pandas fica fora do pacote da nuvem: pesa demais para o limite de
+        # tamanho da função e o backtest é trabalho de pesquisa, não de
+        # operação diária. Roda na sua máquina, onde os CSVs ficam em cache.
+        return {"erro": "O backtest roda localmente, não na nuvem. "
+                        "Use ./scripts/backtest.sh ou a aba Backtest com o "
+                        "servidor local em http://localhost:8000"}
 
     def work() -> dict:
         matches = []

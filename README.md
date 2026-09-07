@@ -101,6 +101,18 @@ margem no resultado e inventaria valor que não existe.
 
 ---
 
+## Colocar no ar
+
+Passo a passo completo em **[DEPLOY.md](DEPLOY.md)** — Vercel para o site e a
+API, Neon para o banco, GitHub Actions como agendador. Tudo em camada
+gratuita.
+
+Resumo do porquê da arquitetura: a Vercel é serverless, então o laço de
+varredura eterno, o WebSocket e o SQLite em arquivo não sobrevivem lá. A
+varredura passa a vir de fora por `/api/cron/scan`, o banco vira Postgres e o
+app busca estado a cada 90 segundos. Para uma carta por dia, nada disso faz
+falta.
+
 ## Instalação
 
 Requisitos: **Python 3.11+** e **Node 18+**.

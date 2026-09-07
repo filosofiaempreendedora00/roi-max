@@ -29,8 +29,21 @@ class Settings(BaseSettings):
 
     # --- app ---
     roimax_token: str = "troque-este-token"
+    # Vazio = SQLite local. Na nuvem, a URL do Postgres (Neon, Supabase...).
+    database_url: str = ""
+    # Segredo separado para o agendador externo chamar /api/cron/*
+    cron_secret: str = ""
     db_path: Path = ROOT / "data" / "roimax.db"
     data_dir: Path = ROOT / "data"
+
+    # Em serverless não existe processo que sobreviva entre requisições, então
+    # o laço de varredura não pode viver dentro do app. A Vercel define VERCEL=1.
+    run_scheduler: bool = True
+
+    @property
+    def is_serverless(self) -> bool:
+        import os
+        return bool(os.environ.get("VERCEL")) or not self.run_scheduler
 
     @property
     def has_live_odds(self) -> bool:

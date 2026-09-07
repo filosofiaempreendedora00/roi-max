@@ -1,0 +1,43 @@
+# Agendador do ROI Max.
+#
+# A Vercel é serverless: não existe processo que fique vivo varrendo odds. O
+# GitHub Actions faz esse papel de graça — ele acorda no horário, chama a API
+# do app e some. Nenhum segredo fica no código: token e URL vêm de
+# Settings -> Secrets and variables -> Actions.
+
+name: Varredura de odds
+
+on:
+  schedule:
+    # horários em UTC. O Brasil está em UTC-3.
+    - cron: "0 14 * * *"   # 11h de Brasília — varredura da manhã
+    - cron: "0 19 * * *"   # 16h de Brasília — monta a carta do dia
+    - cron: "0 22 * * *"   # 19h — captura preço perto dos jogos, para o CLV
+  workflow_dispatch:        # permite disparar na mão pelo site do GitHub
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar a varredura
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          # só o disparo das 19h UTC monta a carta; os outros dois apenas
+          # varrem e atualizam preços de fechamento
+          BUILD=false
+          [ "${{ github.event.schedule }}" = "0 19 * * *" ] && BUILD=true
+
+          echo "Varrendo (carta=$BUILD)..."
+          code=$(curl -sS -o /tmp/out.json -w "%{http_code}" \
+            -X POST "$APP_URL/api/cron/scan?build_card=$BUILD" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            --max-time 120)
+
+          cat /tmp/out.json
+          echo
+          if [ "$code" != "200" ]; then
+            echo "::error::A varredura falhou com HTTP $code"
+            exit 1
+          fi

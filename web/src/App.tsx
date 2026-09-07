@@ -61,8 +61,22 @@ export default function App() {
       setFatal("Configure o token para conectar.");
       return;
     }
-    api.state().then(setSnapshot).catch((e) => setFatal(String(e)));
-    return connect(onEvent, setConnected);
+    const refresh = () => api.state().then(setSnapshot).catch(() => {});
+    refresh();
+
+    // O WebSocket é um bônus: em hospedagem serverless ele não existe. A
+    // busca periódica é o que garante que a carta apareça nos dois lugares —
+    // e para uma carta por dia, 90 segundos é de sobra.
+    const poll = setInterval(refresh, 90_000);
+    const onFocus = () => document.visibilityState === "visible" && refresh();
+    document.addEventListener("visibilitychange", onFocus);
+
+    const stop = connect(onEvent, setConnected);
+    return () => {
+      clearInterval(poll);
+      document.removeEventListener("visibilitychange", onFocus);
+      stop();
+    };
   }, [onEvent]);
 
   async function scan() {
@@ -83,7 +97,8 @@ export default function App() {
     <div className="app">
       <header className="appbar">
         <div className="brand">
-          <span className={`pulse ${connected ? "on" : "off"}`} />
+          <span className={`pulse ${connected ? "on" : "idle"}`}
+                title={connected ? "tempo real" : "atualizando a cada 90s"} />
           <h1>ROI Max</h1>
         </div>
         <div className="appbar-right">

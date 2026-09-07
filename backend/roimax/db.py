@@ -1,329 +1,367 @@
-"""Persistência em SQLite.
+"""Persistência.
 
-SQLite porque o app é single-tenant (você), roda em um processo só e precisa
-de custo zero. O acesso está isolado aqui: trocar por Postgres/TimescaleDB
-depois é reescrever este arquivo, não o resto.
+Roda em SQLite no seu Mac e em Postgres na nuvem, com o mesmo código. Isso
+importa porque a Vercel é serverless: não existe disco que sobreviva entre
+uma invocação e outra, então o SQLite em arquivo simplesmente some lá.
+
+`DATABASE_URL` define qual dos dois. Sem ela, arquivo local.
 """
 from __future__ import annotations
 
 import json
-import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
+from sqlalchemy import (
+    Boolean, Column, DateTime, Float, Integer, MetaData, String, Table, Text,
+    create_engine, delete, func, insert, select, update,
+)
+from sqlalchemy.engine import Engine
+
 from .config import settings
-from .models import CreditUsage, DailyCard, Event, Pick, PushSubscription, Quote, Signal
+from .models import (CreditUsage, DailyCard, Event, Pick, PushSubscription,
+                     Quote, Signal)
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS events (
-    id              TEXT PRIMARY KEY,
-    sport_key       TEXT NOT NULL,
-    league          TEXT,
-    home            TEXT NOT NULL,
-    away            TEXT NOT NULL,
-    commence_time   TEXT NOT NULL,
-    betfair_market_id TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_events_time ON events(commence_time);
+metadata = MetaData()
 
--- histórico de ticks: é o que permite detectar steam e refazer backtest
-CREATE TABLE IF NOT EXISTS quotes (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id    TEXT NOT NULL,
-    bookmaker   TEXT NOT NULL,
-    outcome     TEXT NOT NULL,
-    back        REAL,
-    lay         REAL,
-    ts          TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_quotes_event_ts ON quotes(event_id, ts);
-CREATE INDEX IF NOT EXISTS idx_quotes_lookup   ON quotes(event_id, bookmaker, outcome, ts);
+events = Table(
+    "events", metadata,
+    Column("id", String(120), primary_key=True),
+    Column("sport_key", String(80), nullable=False),
+    Column("league", String(120)),
+    Column("home", String(120), nullable=False),
+    Column("away", String(120), nullable=False),
+    Column("commence_time", DateTime(timezone=True), nullable=False, index=True),
+    Column("betfair_market_id", String(40)),
+)
 
-CREATE TABLE IF NOT EXISTS signals (
-    id          TEXT PRIMARY KEY,
-    payload     TEXT NOT NULL,
-    kind        TEXT NOT NULL,
-    event_id    TEXT NOT NULL,
-    ts          TEXT NOT NULL,
-    acted       INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts DESC);
+# histórico de ticks: alimenta o detector de movimento e o preço de fechamento
+quotes = Table(
+    "quotes", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("event_id", String(120), nullable=False, index=True),
+    Column("bookmaker", String(60), nullable=False),
+    Column("outcome", String(10), nullable=False),
+    Column("back", Float),
+    Column("lay", Float),
+    Column("ts", DateTime(timezone=True), nullable=False, index=True),
+)
 
-CREATE TABLE IF NOT EXISTS credit_usage (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider    TEXT NOT NULL,
-    endpoint    TEXT NOT NULL,
-    credits     INTEGER NOT NULL,
-    remaining   INTEGER,
-    ts          TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_credit_ts ON credit_usage(provider, ts);
+signals = Table(
+    "signals", metadata,
+    Column("id", String(40), primary_key=True),
+    Column("payload", Text, nullable=False),
+    Column("kind", String(30), nullable=False),
+    Column("event_id", String(120), nullable=False),
+    Column("ts", DateTime(timezone=True), nullable=False, index=True),
+    Column("acted", Boolean, nullable=False, default=False),
+)
 
-CREATE TABLE IF NOT EXISTS push_subs (
-    endpoint    TEXT PRIMARY KEY,
-    p256dh      TEXT NOT NULL,
-    auth        TEXT NOT NULL,
-    label       TEXT,
-    ts          TEXT NOT NULL
-);
+picks = Table(
+    "picks", metadata,
+    Column("id", String(40), primary_key=True),
+    Column("payload", Text, nullable=False),
+    Column("event_id", String(120), nullable=False),
+    Column("outcome", String(10), nullable=False),
+    Column("side", String(6), nullable=False),
+    Column("commence_time", DateTime(timezone=True), nullable=False, index=True),
+    Column("settled", Boolean, nullable=False, default=False),
+    Column("taken_at", DateTime(timezone=True), nullable=False),
+    # um palpite por lance: evita duplicar a mesma entrada
+    Column("dedupe", String(160), unique=True, nullable=False),
+)
 
--- palpites: o registro permanente, com preço de fechamento para medir CLV
-CREATE TABLE IF NOT EXISTS picks (
-    id              TEXT PRIMARY KEY,
-    payload         TEXT NOT NULL,
-    event_id        TEXT NOT NULL,
-    outcome         TEXT NOT NULL,
-    side            TEXT NOT NULL,
-    commence_time   TEXT NOT NULL,
-    settled         INTEGER NOT NULL DEFAULT 0,
-    taken_at        TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_picks_open ON picks(settled, commence_time);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_picks_unique ON picks(event_id, outcome, side);
+cards = Table(
+    "cards", metadata,
+    Column("date", String(12), primary_key=True),
+    Column("payload", Text, nullable=False),
+    Column("ts", DateTime(timezone=True), nullable=False),
+)
 
-CREATE TABLE IF NOT EXISTS cards (
-    date        TEXT PRIMARY KEY,
-    payload     TEXT NOT NULL,
-    ts          TEXT NOT NULL
-);
+credit_usage = Table(
+    "credit_usage", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("provider", String(40), nullable=False, index=True),
+    Column("endpoint", String(120), nullable=False),
+    Column("credits", Integer, nullable=False),
+    Column("remaining", Integer),
+    Column("ts", DateTime(timezone=True), nullable=False, index=True),
+)
 
-CREATE TABLE IF NOT EXISTS kv (
-    key         TEXT PRIMARY KEY,
-    value       TEXT NOT NULL
-);
-"""
+push_subs = Table(
+    "push_subs", metadata,
+    Column("endpoint", Text, primary_key=True),
+    Column("p256dh", Text, nullable=False),
+    Column("auth", Text, nullable=False),
+    Column("label", Text),
+    Column("ts", DateTime(timezone=True), nullable=False),
+)
 
+kv = Table(
+    "kv", metadata,
+    Column("key", String(80), primary_key=True),
+    Column("value", Text, nullable=False),
+)
 
-def _iso(dt: datetime) -> str:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).isoformat()
-
-
-def _parse(s: str) -> datetime:
-    return datetime.fromisoformat(s)
+_engine: Engine | None = None
 
 
-_conn: sqlite3.Connection | None = None
+def _url() -> str:
+    if settings.database_url:
+        # a Neon entrega "postgres://"; o SQLAlchemy quer "postgresql+psycopg://"
+        u = settings.database_url
+        if u.startswith("postgres://"):
+            u = u.replace("postgres://", "postgresql+psycopg://", 1)
+        elif u.startswith("postgresql://"):
+            u = u.replace("postgresql://", "postgresql+psycopg://", 1)
+        return u
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{settings.db_path}"
 
 
-def connect() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
-        settings.db_path.parent.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(settings.db_path, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _conn.execute("PRAGMA synchronous=NORMAL")
-        _conn.executescript(SCHEMA)
-        _conn.commit()
-    return _conn
+def connect() -> Engine:
+    global _engine
+    if _engine is None:
+        url = _url()
+        kwargs: dict[str, Any] = {"future": True}
+        if url.startswith("sqlite"):
+            kwargs["connect_args"] = {"check_same_thread": False}
+        else:
+            # serverless abre e fecha conexão o tempo todo; sem pre_ping a
+            # função herda um socket morto do pool e falha na primeira query
+            kwargs.update(pool_pre_ping=True, pool_size=1, max_overflow=2)
+        _engine = create_engine(url, **kwargs)
+        metadata.create_all(_engine)
+    return _engine
+
+
+def reset_engine() -> None:
+    """Usado pelos testes, que trocam o banco a cada caso."""
+    global _engine
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
 
 
 @contextmanager
-def tx() -> Iterator[sqlite3.Connection]:
-    conn = connect()
-    try:
+def tx() -> Iterator:
+    with connect().begin() as conn:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
 
 
-# ---------------------------------------------------------------- events
+def _aware(dt: datetime) -> datetime:
+    """O SQLite devolve datetime sem fuso; sem isto a comparação explode."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _upsert(conn, table: Table, values: dict, index_elements: list[str],
+            update_cols: dict | None = None) -> None:
+    """INSERT ... ON CONFLICT DO UPDATE, no dialeto certo."""
+    dialect = conn.engine.dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        stmt = pg_insert(table).values(**values)
+    else:
+        from sqlalchemy.dialects.sqlite import insert as sq_insert
+        stmt = sq_insert(table).values(**values)
+    setter = update_cols if update_cols is not None else {
+        k: getattr(stmt.excluded, k) for k in values if k not in index_elements
+    }
+    conn.execute(stmt.on_conflict_do_update(index_elements=index_elements, set_=setter))
+
+
+# ---------------------------------------------------------------- eventos
 
 def upsert_event(ev: Event) -> None:
     with tx() as c:
-        c.execute(
-            """INSERT INTO events (id, sport_key, league, home, away, commence_time, betfair_market_id)
-               VALUES (?,?,?,?,?,?,?)
-               ON CONFLICT(id) DO UPDATE SET
-                 league=excluded.league,
-                 commence_time=excluded.commence_time,
-                 betfair_market_id=COALESCE(excluded.betfair_market_id, events.betfair_market_id)""",
-            (ev.id, ev.sport_key, ev.league, ev.home, ev.away,
-             _iso(ev.commence_time), ev.betfair_market_id),
-        )
+        _upsert(c, events, {
+            "id": ev.id, "sport_key": ev.sport_key, "league": ev.league,
+            "home": ev.home, "away": ev.away,
+            "commence_time": _aware(ev.commence_time),
+            "betfair_market_id": ev.betfair_market_id,
+        }, ["id"])
+
+
+def _to_event(r) -> Event:
+    return Event(id=r.id, sport_key=r.sport_key, league=r.league or "",
+                 home=r.home, away=r.away,
+                 commence_time=_aware(r.commence_time),
+                 betfair_market_id=r.betfair_market_id)
 
 
 def get_event(event_id: str) -> Event | None:
-    row = connect().execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()
-    return _row_to_event(row) if row else None
-
-
-def _row_to_event(row: sqlite3.Row) -> Event:
-    return Event(
-        id=row["id"], sport_key=row["sport_key"], league=row["league"] or "",
-        home=row["home"], away=row["away"],
-        commence_time=_parse(row["commence_time"]),
-        betfair_market_id=row["betfair_market_id"],
-    )
+    with connect().connect() as c:
+        r = c.execute(select(events).where(events.c.id == event_id)).first()
+    return _to_event(r) if r else None
 
 
 def upcoming_events(limit: int = 100) -> list[Event]:
-    rows = connect().execute(
-        "SELECT * FROM events ORDER BY commence_time ASC LIMIT ?", (limit,)
-    ).fetchall()
-    return [_row_to_event(r) for r in rows]
+    with connect().connect() as c:
+        rows = c.execute(
+            select(events).order_by(events.c.commence_time.asc()).limit(limit)
+        ).fetchall()
+    return [_to_event(r) for r in rows]
 
 
-# ---------------------------------------------------------------- quotes
+# ---------------------------------------------------------------- cotações
 
-def insert_quotes(quotes: list[Quote]) -> None:
-    if not quotes:
+def insert_quotes(rows: list[Quote]) -> None:
+    if not rows:
         return
     with tx() as c:
-        c.executemany(
-            "INSERT INTO quotes (event_id, bookmaker, outcome, back, lay, ts) VALUES (?,?,?,?,?,?)",
-            [(q.event_id, q.bookmaker, q.outcome.value, q.back, q.lay, _iso(q.ts)) for q in quotes],
-        )
+        c.execute(insert(quotes), [
+            {"event_id": q.event_id, "bookmaker": q.bookmaker,
+             "outcome": q.outcome.value, "back": q.back, "lay": q.lay,
+             "ts": _aware(q.ts)} for q in rows
+        ])
 
 
-def quote_history(event_id: str, bookmaker: str, outcome: str, limit: int = 200) -> list[Quote]:
-    rows = connect().execute(
-        """SELECT * FROM quotes WHERE event_id=? AND bookmaker=? AND outcome=?
-           ORDER BY ts DESC LIMIT ?""",
-        (event_id, bookmaker, outcome, limit),
-    ).fetchall()
-    return [
-        Quote(event_id=r["event_id"], bookmaker=r["bookmaker"], outcome=r["outcome"],
-              back=r["back"], lay=r["lay"], ts=_parse(r["ts"]))
-        for r in rows
-    ]
+def quote_history(event_id: str, bookmaker: str, outcome: str,
+                  limit: int = 200) -> list[Quote]:
+    with connect().connect() as c:
+        rows = c.execute(
+            select(quotes)
+            .where(quotes.c.event_id == event_id,
+                   quotes.c.bookmaker == bookmaker,
+                   quotes.c.outcome == outcome)
+            .order_by(quotes.c.ts.desc()).limit(limit)
+        ).fetchall()
+    return [Quote(event_id=r.event_id, bookmaker=r.bookmaker, outcome=r.outcome,
+                  back=r.back, lay=r.lay, ts=_aware(r.ts)) for r in rows]
 
 
-# ---------------------------------------------------------------- signals
+# ----------------------------------------------------------------- sinais
 
 def insert_signal(sig: Signal) -> None:
     with tx() as c:
-        c.execute(
-            "INSERT OR REPLACE INTO signals (id, payload, kind, event_id, ts, acted) VALUES (?,?,?,?,?,0)",
-            (sig.id, sig.model_dump_json(), sig.kind.value, sig.event_id, _iso(sig.ts)),
-        )
+        _upsert(c, signals, {
+            "id": sig.id, "payload": sig.model_dump_json(), "kind": sig.kind.value,
+            "event_id": sig.event_id, "ts": _aware(sig.ts), "acted": False,
+        }, ["id"])
 
 
 def recent_signals(limit: int = 50) -> list[Signal]:
-    rows = connect().execute(
-        "SELECT payload FROM signals ORDER BY ts DESC LIMIT ?", (limit,)
-    ).fetchall()
-    return [Signal.model_validate_json(r["payload"]) for r in rows]
+    with connect().connect() as c:
+        rows = c.execute(
+            select(signals.c.payload).order_by(signals.c.ts.desc()).limit(limit)
+        ).fetchall()
+    return [Signal.model_validate_json(r.payload) for r in rows]
 
 
 def mark_acted(signal_id: str) -> None:
     with tx() as c:
-        c.execute("UPDATE signals SET acted=1 WHERE id=?", (signal_id,))
+        c.execute(update(signals).where(signals.c.id == signal_id).values(acted=True))
 
 
-# ---------------------------------------------------------------- créditos
-
-def record_credit(usage: CreditUsage) -> None:
-    with tx() as c:
-        c.execute(
-            "INSERT INTO credit_usage (provider, endpoint, credits, remaining, ts) VALUES (?,?,?,?,?)",
-            (usage.provider, usage.endpoint, usage.credits, usage.remaining, _iso(usage.ts)),
-        )
-
-
-def credits_used_since(provider: str, since: datetime) -> int:
-    row = connect().execute(
-        "SELECT COALESCE(SUM(credits),0) AS n FROM credit_usage WHERE provider=? AND ts>=?",
-        (provider, _iso(since)),
-    ).fetchone()
-    return int(row["n"])
-
-
-# ---------------------------------------------------------------- push
-
-def save_subscription(sub: PushSubscription) -> None:
-    with tx() as c:
-        c.execute(
-            "INSERT OR REPLACE INTO push_subs (endpoint, p256dh, auth, label, ts) VALUES (?,?,?,?,?)",
-            (sub.endpoint, sub.p256dh, sub.auth, sub.label, _iso(datetime.now(timezone.utc))),
-        )
-
-
-def all_subscriptions() -> list[PushSubscription]:
-    rows = connect().execute("SELECT * FROM push_subs").fetchall()
-    return [PushSubscription(endpoint=r["endpoint"], p256dh=r["p256dh"],
-                             auth=r["auth"], label=r["label"] or "") for r in rows]
-
-
-def delete_subscription(endpoint: str) -> None:
-    with tx() as c:
-        c.execute("DELETE FROM push_subs WHERE endpoint=?", (endpoint,))
-
-
-# ---------------------------------------------------------------- kv
-
-def kv_get(key: str, default: Any = None) -> Any:
-    row = connect().execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
-    return json.loads(row["value"]) if row else default
-
-
-def kv_set(key: str, value: Any) -> None:
-    with tx() as c:
-        c.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?,?)", (key, json.dumps(value)))
-
-
-# ---------------------------------------------------------------- palpites
+# --------------------------------------------------------------- palpites
 
 def save_pick(pick: Pick) -> None:
-    """Grava ou atualiza. O índice único evita palpite duplicado no mesmo lance."""
+    key = f"{pick.event_id}|{pick.outcome.value}|{pick.side}"
     with tx() as c:
-        c.execute(
-            """INSERT INTO picks (id, payload, event_id, outcome, side,
-                                  commence_time, settled, taken_at)
-               VALUES (?,?,?,?,?,?,?,?)
-               ON CONFLICT(event_id, outcome, side) DO UPDATE SET
-                 payload=excluded.payload, settled=excluded.settled""",
-            (pick.id, pick.model_dump_json(), pick.event_id, pick.outcome.value,
-             pick.side, _iso(pick.commence_time),
-             1 if pick.result else 0, _iso(pick.taken_at)),
-        )
+        _upsert(c, picks, {
+            "id": pick.id, "payload": pick.model_dump_json(),
+            "event_id": pick.event_id, "outcome": pick.outcome.value,
+            "side": pick.side, "commence_time": _aware(pick.commence_time),
+            "settled": bool(pick.result), "taken_at": _aware(pick.taken_at),
+            "dedupe": key,
+        }, ["dedupe"], update_cols={"payload": pick.model_dump_json(),
+                                    "settled": bool(pick.result)})
 
 
 def open_picks() -> list[Pick]:
-    """Palpites de jogos que ainda não começaram — os que ainda podem ter o
-    preço de fechamento atualizado."""
-    rows = connect().execute(
-        "SELECT payload FROM picks WHERE settled=0 AND commence_time > ? ORDER BY commence_time",
-        (_iso(datetime.now(timezone.utc)),),
-    ).fetchall()
-    return [Pick.model_validate_json(r["payload"]) for r in rows]
+    """Jogos que ainda não começaram: os que ainda podem ter fechamento."""
+    now = datetime.now(timezone.utc)
+    with connect().connect() as c:
+        rows = c.execute(
+            select(picks.c.payload)
+            .where(picks.c.settled.is_(False), picks.c.commence_time > now)
+            .order_by(picks.c.commence_time)
+        ).fetchall()
+    return [Pick.model_validate_json(r.payload) for r in rows]
 
 
 def all_picks(limit: int = 500) -> list[Pick]:
-    rows = connect().execute(
-        "SELECT payload FROM picks ORDER BY taken_at DESC LIMIT ?", (limit,)
-    ).fetchall()
-    return [Pick.model_validate_json(r["payload"]) for r in rows]
+    with connect().connect() as c:
+        rows = c.execute(
+            select(picks.c.payload).order_by(picks.c.taken_at.desc()).limit(limit)
+        ).fetchall()
+    return [Pick.model_validate_json(r.payload) for r in rows]
 
 
 def find_pick(event_id: str, outcome: str, side: str) -> Pick | None:
-    row = connect().execute(
-        "SELECT payload FROM picks WHERE event_id=? AND outcome=? AND side=?",
-        (event_id, outcome, side),
-    ).fetchone()
-    return Pick.model_validate_json(row["payload"]) if row else None
+    with connect().connect() as c:
+        r = c.execute(select(picks.c.payload).where(
+            picks.c.dedupe == f"{event_id}|{outcome}|{side}")).first()
+    return Pick.model_validate_json(r.payload) if r else None
 
 
 # ----------------------------------------------------------------- cartas
 
 def save_card(card: DailyCard) -> None:
     with tx() as c:
-        c.execute(
-            "INSERT OR REPLACE INTO cards (date, payload, ts) VALUES (?,?,?)",
-            (card.date, card.model_dump_json(), _iso(card.generated_at)),
-        )
+        _upsert(c, cards, {"date": card.date, "payload": card.model_dump_json(),
+                           "ts": _aware(card.generated_at)}, ["date"])
 
 
 def get_card(date: str) -> DailyCard | None:
-    row = connect().execute("SELECT payload FROM cards WHERE date=?", (date,)).fetchone()
-    return DailyCard.model_validate_json(row["payload"]) if row else None
+    with connect().connect() as c:
+        r = c.execute(select(cards.c.payload).where(cards.c.date == date)).first()
+    return DailyCard.model_validate_json(r.payload) if r else None
 
 
 def latest_card() -> DailyCard | None:
-    row = connect().execute("SELECT payload FROM cards ORDER BY date DESC LIMIT 1").fetchone()
-    return DailyCard.model_validate_json(row["payload"]) if row else None
+    with connect().connect() as c:
+        r = c.execute(select(cards.c.payload).order_by(cards.c.date.desc()).limit(1)).first()
+    return DailyCard.model_validate_json(r.payload) if r else None
+
+
+# --------------------------------------------------------------- créditos
+
+def record_credit(usage: CreditUsage) -> None:
+    with tx() as c:
+        c.execute(insert(credit_usage).values(
+            provider=usage.provider, endpoint=usage.endpoint,
+            credits=usage.credits, remaining=usage.remaining, ts=_aware(usage.ts)))
+
+
+def credits_used_since(provider: str, since: datetime) -> int:
+    with connect().connect() as c:
+        r = c.execute(select(func.coalesce(func.sum(credit_usage.c.credits), 0))
+                      .where(credit_usage.c.provider == provider,
+                             credit_usage.c.ts >= _aware(since))).scalar()
+    return int(r or 0)
+
+
+# ------------------------------------------------------------------- push
+
+def save_subscription(sub: PushSubscription) -> None:
+    with tx() as c:
+        _upsert(c, push_subs, {
+            "endpoint": sub.endpoint, "p256dh": sub.p256dh, "auth": sub.auth,
+            "label": sub.label, "ts": datetime.now(timezone.utc)}, ["endpoint"])
+
+
+def all_subscriptions() -> list[PushSubscription]:
+    with connect().connect() as c:
+        rows = c.execute(select(push_subs)).fetchall()
+    return [PushSubscription(endpoint=r.endpoint, p256dh=r.p256dh,
+                             auth=r.auth, label=r.label or "") for r in rows]
+
+
+def delete_subscription(endpoint: str) -> None:
+    with tx() as c:
+        c.execute(delete(push_subs).where(push_subs.c.endpoint == endpoint))
+
+
+# --------------------------------------------------------------------- kv
+
+def kv_get(key: str, default: Any = None) -> Any:
+    with connect().connect() as c:
+        r = c.execute(select(kv.c.value).where(kv.c.key == key)).first()
+    return json.loads(r.value) if r else default
+
+
+def kv_set(key: str, value: Any) -> None:
+    with tx() as c:
+        _upsert(c, kv, {"key": key, "value": json.dumps(value)}, ["key"])

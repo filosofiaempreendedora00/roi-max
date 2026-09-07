@@ -51,6 +51,9 @@ body {
 .brand { display: flex; align-items: center; gap: 9px; }
 .brand h1 { font-size: 17px; margin: 0; letter-spacing: -0.02em; }
 .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--neg); }
+/* sem WebSocket o app não está quebrado: está em modo de busca periódica,
+   que é o normal em hospedagem serverless */
+.pulse.idle { background: var(--muted); }
 .pulse.on { background: var(--pos); box-shadow: 0 0 0 0 rgba(34, 211, 153, 0.6);
   animation: pulse 2.2s infinite; }
 @keyframes pulse {
