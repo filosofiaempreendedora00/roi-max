@@ -28,9 +28,21 @@ log = logging.getLogger("roimax")
 WEB_DIST = ROOT / "web" / "dist"
 
 
+# guardado para o /api/health poder contar o que houve
+DB_ERROR: str | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.connect()
+    global DB_ERROR
+    try:
+        db.connect()
+        DB_ERROR = None
+    except Exception as exc:
+        # Derrubar o app inteiro por causa do banco esconde o diagnóstico:
+        # em serverless o resultado é um 500 mudo. Melhor subir e contar.
+        DB_ERROR = f"{type(exc).__name__}: {exc}"
+        log.error("falha ao conectar no banco: %s", DB_ERROR)
     task = None
     if settings.is_serverless:
         # a varredura vem de fora, por /api/cron/scan
@@ -89,7 +101,36 @@ def _snapshot() -> dict:
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"ok": True, "live_odds": settings.has_live_odds, "clients": hub.n_clients}
+    """Diagnóstico sem precisar de token: é o que se olha quando o deploy
+    sobe mas nada funciona."""
+    import os
+
+    banco = "sqlite"
+    erro = DB_ERROR
+    if settings.database_url:
+        banco = "postgres/pooler" if db._is_transaction_pooler(settings.database_url) \
+            else "postgres"
+    try:
+        from sqlalchemy import text
+        with db.connect().connect() as c:
+            c.execute(text("select 1"))
+        banco_ok = True
+    except Exception as exc:
+        banco_ok = False
+        erro = f"{type(exc).__name__}: {exc}"[:200]
+
+    return {
+        "ok": banco_ok,
+        "banco": banco,
+        "banco_ok": banco_ok,
+        "erro": erro,
+        "live_odds": settings.has_live_odds,
+        "push_configurado": bool(settings.vapid_public_key),
+        "serverless": settings.is_serverless,
+        "regiao": os.environ.get("VERCEL_REGION", "local"),
+        "interface_compilada": WEB_DIST.exists(),
+        "clients": hub.n_clients,
+    }
 
 
 @app.get("/api/state", dependencies=[Depends(require_token)])

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterator
 
 from sqlalchemy import (
@@ -116,8 +117,16 @@ def _url() -> str:
         elif u.startswith("postgresql://"):
             u = u.replace("postgresql://", "postgresql+psycopg://", 1)
         return u
-    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
-    return f"sqlite:///{settings.db_path}"
+    # sem DATABASE_URL em serverless o único lugar gravável é /tmp, e mesmo
+    # assim o arquivo some entre invocações — serve só para não quebrar
+    path = settings.db_path
+    if settings.is_serverless:
+        path = Path("/tmp") / "roimax.db"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return f"sqlite:///{path}"
 
 
 def _is_transaction_pooler(url: str) -> bool:

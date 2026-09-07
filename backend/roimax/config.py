@@ -67,4 +67,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-settings.data_dir.mkdir(parents=True, exist_ok=True)
+
+# Nada de escrever em disco durante o import. Em serverless o sistema de
+# arquivos é somente leitura, e um mkdir aqui derruba a função ANTES do
+# FastAPI carregar — o que aparece como FUNCTION_INVOCATION_FAILED, sem dizer
+# o motivo. Quem precisa da pasta cria na hora de usar.
+if not settings.is_serverless:
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
