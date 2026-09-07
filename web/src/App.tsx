@@ -95,6 +95,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <div className="shell">
       <header className="appbar">
         <div className="brand">
           <span className={`pulse ${connected ? "on" : "idle"}`}
@@ -136,12 +137,21 @@ export default function App() {
           <SettingsPage snapshot={snapshot} bankroll={bankroll} setBankroll={setBankroll} />
         )}
       </main>
+      </div>
 
+      {/* Uma barra só, que o CSS coloca embaixo no celular e na lateral no
+          desktop. Abas de celular esticadas numa tela de 27" desperdiçam a
+          tela inteira e escondem o que importa atrás de um clique. */}
       <nav className="tabbar">
         {(["carta", "sinais", "backtest", "config"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-            {t === "carta" ? "Carta" : t === "sinais" ? "Sinais"
-              : t === "backtest" ? "Backtest" : "Config"}
+            <span className="tab-icon" aria-hidden="true">
+              {t === "carta" ? "◆" : t === "sinais" ? "◈" : t === "backtest" ? "◫" : "⚙"}
+            </span>
+            <span className="tab-label">
+              {t === "carta" ? "Carta" : t === "sinais" ? "Sinais"
+                : t === "backtest" ? "Backtest" : "Config"}
+            </span>
           </button>
         ))}
       </nav>

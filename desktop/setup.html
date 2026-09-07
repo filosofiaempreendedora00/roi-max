@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>ROI Max</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; height:100vh; display:flex; align-items:center;
+    justify-content:center; background:#0b0f14; color:#e8eef6;
+    font:15px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; }
+  .box { width:min(420px,88vw); text-align:center; }
+  h1 { font-size:22px; margin:0 0 6px; letter-spacing:-0.02em; }
+  p { color:#8b9bb0; font-size:13px; margin:0 0 22px; }
+  input { width:100%; padding:12px 13px; font-size:15px; border-radius:9px;
+    border:1px solid #26303d; background:#121820; color:#e8eef6; box-sizing:border-box; }
+  input:focus { outline:2px solid #22d399; outline-offset:1px; }
+  button { width:100%; margin-top:10px; padding:13px; font-size:15px; font-weight:600;
+    border:0; border-radius:9px; background:#22d399; color:#06120d; cursor:pointer; }
+  .alt { background:transparent; color:#8b9bb0; border:1px solid #26303d; }
+  .hint { font-size:11px; color:#8b9bb0; margin-top:16px; }
+</style></head><body>
+  <div class="box">
+    <h1>ROI Max</h1>
+    <p>Onde está o seu servidor?</p>
+    <input id="u" placeholder="https://seu-app.vercel.app" autofocus>
+    <button onclick="salvar(document.getElementById('u').value)">Conectar</button>
+    <button class="alt" onclick="salvar('http://localhost:8000')">
+      Usar servidor local (localhost:8000)
+    </button>
+    <p class="hint">Dá para mudar depois em Arquivo → Configurar servidor.</p>
+  </div>
+<script>
+  function salvar(v) {
+    v = (v || "").trim();
+    if (!v) return;
+    if (!/^https?:\/\//.test(v)) v = "https://" + v;
+    // o processo principal escuta esta mensagem e grava a configuração
+    console.log("ROIMAX_SET_URL:" + v);
+  }
+  document.getElementById("u").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") salvar(e.target.value);
+  });
+</script></body></html>

@@ -1,0 +1,41 @@
+{
+  "name": "roimax-desktop",
+  "version": "0.1.0",
+  "description": "ROI Max para macOS",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.roimax.desktop",
+    "productName": "ROI Max",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "setup.html",
+      "build/icon.icns"
+    ],
+    "mac": {
+      "category": "public.app-category.finance",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "identity": null
+    }
+  }
+}

@@ -313,3 +313,42 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 12px;
 .steps code { background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
   font-size: 12px; }
 .steps a { color: var(--accent); }
+
+
+/* ============================================================== desktop
+   No celular a navegação vive embaixo, ao alcance do polegar. No desktop
+   isso não faz sentido: vira uma faixa perdida no rodapé de uma tela larga.
+   A partir de 900px ela migra para uma coluna à esquerda e o conteúdo ganha
+   a largura que sobra. */
+
+.tab-icon { display: none; }
+
+@media (min-width: 900px) {
+  .app { flex-direction: row-reverse; }
+
+  .tabbar {
+    position: static; flex-direction: column; width: 208px; flex: 0 0 208px;
+    border-top: 0; border-right: 1px solid var(--line);
+    padding: 12px 10px; gap: 4px; align-self: stretch;
+  }
+  .tabbar button {
+    display: flex; align-items: center; gap: 11px; flex: 0 0 auto;
+    padding: 11px 13px; border-radius: 9px; text-align: left; font-size: 14px;
+  }
+  .tabbar button:hover { background: var(--surface-2); color: var(--text); }
+  .tabbar button.on { background: var(--surface-2); color: var(--accent);
+    box-shadow: none; }
+  .tab-icon { display: inline; font-size: 13px; width: 14px; }
+
+  .shell { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+  .content { padding-bottom: 28px; --maxw: 1120px; }
+
+  /* com espaço sobrando, o painel de CLV vira uma faixa de quatro colunas
+     em vez de dois blocos empilhados */
+  .clv .stats { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (min-width: 1280px) {
+  .content { --maxw: 1240px; }
+  .entry-grid b { font-size: 24px; }
+}

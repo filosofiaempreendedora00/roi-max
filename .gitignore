@@ -12,3 +12,5 @@ data/historical/
 .DS_Store
 *.egg-info/
 tsconfig.tsbuildinfo
+desktop/node_modules/
+desktop/dist/

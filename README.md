@@ -101,6 +101,15 @@ margem no resultado e inventaria valor que não existe.
 
 ---
 
+## App de Mac
+
+`desktop/` traz uma casca Electron: ícone no Dock, janela própria, sem barra de
+endereço. Arraste `desktop/dist/mac-arm64/ROI Max.app` para Aplicativos.
+Detalhes em [DEPLOY.md](DEPLOY.md).
+
+O mesmo código serve celular e desktop: abaixo de 900px a navegação fica
+embaixo, ao alcance do polegar; acima disso vira barra lateral.
+
 ## Colocar no ar
 
 Passo a passo completo em **[DEPLOY.md](DEPLOY.md)** — Vercel para o site e a

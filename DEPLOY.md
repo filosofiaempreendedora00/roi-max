@@ -22,15 +22,40 @@ Peças finais: **Vercel** (site + API) · **Neon** (banco) · **GitHub Actions**
 
 ---
 
-## Passo 1 — Banco de dados na Neon
+## Passo 1 — Banco de dados (Supabase ou Neon)
 
-1. Entre em <https://neon.com> e crie conta com o GitHub.
-2. **Create project** → nome `roi-max`, região **AWS us-east-1** (mesma região
-   padrão da Vercel; banco longe da função é latência à toa).
-3. Copie a **connection string**. É parecida com:
-   `postgresql://usuario:senha@ep-algo-123.us-east-1.aws.neon.tech/neondb?sslmode=require`
+Qualquer Postgres serve. Se você já tem conta no Supabase, use ele.
 
-Guarde: é o seu `DATABASE_URL`. O app cria as tabelas sozinho na primeira vez.
+### Supabase
+
+1. **New project** → nome `roi-max`, região **South America (São Paulo)** ou
+   **East US**. Guarde a senha do banco que ele pedir.
+2. No projeto: **Connect** (botão no topo) → aba **Connection string**.
+3. **Escolha a `Transaction pooler`** — porta **6543**. Fica assim:
+
+   ```
+   postgresql://postgres.SEUREF:SENHA@aws-0-REGIAO.pooler.supabase.com:6543/postgres
+   ```
+
+4. Troque `[YOUR-PASSWORD]` pela senha real do passo 1.
+
+> **Não use a conexão direta** (`db.SEUREF.supabase.co:5432`). Ela responde só
+> em IPv6 e a Vercel não fala IPv6 — o deploy sobe e a primeira consulta
+> falha, sem mensagem que ajude.
+>
+> O pooler em modo transação, por sua vez, quebra *prepared statements*, que é
+> o padrão do driver do Postgres. O app **já detecta** a URL do pooler e
+> desliga isso sozinho, então você não precisa fazer nada — só escolher a
+> string certa.
+
+### Neon (alternativa)
+
+1. <https://neon.com> → **Create project**, região **AWS us-east-1**.
+2. Copie a connection string:
+   `postgresql://usuario:senha@ep-algo.us-east-1.aws.neon.tech/neondb?sslmode=require`
+
+Nos dois casos, essa string é o seu `DATABASE_URL`. O app cria as tabelas
+sozinho na primeira vez.
 
 ## Passo 2 — Suas chaves
 
@@ -146,9 +171,49 @@ histórico de créditos e cotações já coletados):
 
 | Sintoma | Causa provável |
 |---|---|
-| `FUNCTION_INVOCATION_FAILED` | `DATABASE_URL` errada ou banco da Neon suspenso — abra o painel da Neon uma vez para acordar |
+| `FUNCTION_INVOCATION_FAILED` | `DATABASE_URL` errada, ou banco suspenso — abra o painel uma vez para acordar |
+| Timeout ou "connection refused" no Supabase | Você usou a conexão direta (IPv6). Troque pela `Transaction pooler`, porta 6543 |
+| `prepared statement ... does not exist` | URL do pooler não reconhecida. Confira que ela tem `:6543` ou `pooler.supabase.com` |
 | `live_odds: false` | `ODDS_API_KEY` não chegou nas variáveis da Vercel |
 | Login não aceita o token | O `ROIMAX_TOKEN` da Vercel é diferente do que você digitou |
 | Actions falha com 401 | `CRON_SECRET` diferente entre GitHub e Vercel |
 | Carta sempre vazia | Normal com filtro forte. Confira em **Sinais** se está chegando dado |
 | Push não chega no iPhone | Precisa estar instalado na Tela de Início, não aberto no Safari |
+
+
+---
+
+# App de Mac
+
+Para não depender de digitar endereço no navegador. Ele é a mesma interface
+numa casca nativa: ícone no Dock, janela própria, sem barra de endereço.
+
+## Usar
+
+O app já está montado em `desktop/dist/mac-arm64/ROI Max.app`. Arraste para
+**Aplicativos**. Na primeira abertura o macOS reclama que o app não é de
+desenvolvedor identificado — é esperado, ele não tem certificado da Apple
+(que custa US$ 99/ano). Clique com o **botão direito → Abrir**, e confirme.
+Só na primeira vez.
+
+Ao abrir, ele pergunta onde está o servidor:
+
+- **Nuvem:** cole o endereço da Vercel
+- **Local:** botão "Usar servidor local"
+
+Dá para trocar depois em **Arquivo → Configurar servidor** (`Cmd+,`).
+
+O link "Abrir na Betfair" abre no seu **navegador padrão**, de propósito:
+dentro do app você estaria deslogado da Betfair.
+
+## Reconstruir depois de mudar a interface
+
+```bash
+cd web && npm run build && cd ../desktop && npx electron-builder --mac
+```
+
+## Rodar sem empacotar (desenvolvimento)
+
+```bash
+cd desktop && npm start
+```

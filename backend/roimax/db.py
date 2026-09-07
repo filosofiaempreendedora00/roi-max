@@ -120,6 +120,17 @@ def _url() -> str:
     return f"sqlite:///{settings.db_path}"
 
 
+def _is_transaction_pooler(url: str) -> bool:
+    """Detecta pooler em modo transação (Supabase Supavisor, PgBouncer).
+
+    Importa porque nesse modo a conexão é reatribuída a cada transação, então
+    um `prepared statement` criado numa requisição não existe na seguinte — e
+    o psycopg cria isso sozinho por padrão. O sintoma é um erro intermitente
+    de "prepared statement does not exist" que só aparece sob carga.
+    """
+    return ":6543" in url or "pooler.supabase.com" in url
+
+
 def connect() -> Engine:
     global _engine
     if _engine is None:
@@ -127,6 +138,12 @@ def connect() -> Engine:
         kwargs: dict[str, Any] = {"future": True}
         if url.startswith("sqlite"):
             kwargs["connect_args"] = {"check_same_thread": False}
+        elif _is_transaction_pooler(url):
+            # o pooler externo já gerencia conexões: um pool nosso por cima
+            # só atrapalha. E prepared statements têm que sair de cena.
+            from sqlalchemy.pool import NullPool
+            kwargs.update(poolclass=NullPool,
+                          connect_args={"prepare_threshold": None})
         else:
             # serverless abre e fecha conexão o tempo todo; sem pre_ping a
             # função herda um socket morto do pool e falha na primeira query
