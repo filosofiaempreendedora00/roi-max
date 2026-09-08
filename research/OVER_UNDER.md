@@ -1,3 +1,11 @@
+# ⚠️ ESTE DOCUMENTO ESTÁ ERRADO — ver correção no fim
+
+O achado descrito abaixo era artefato de um erro meu de medição. A regra
+**perde dinheiro** quando calculada com preços executáveis. Mantive o texto
+original para registro do erro, com a correção ao final.
+
+---
+
 # A regra que sobreviveu
 
 Depois de derrubar o modelo de gols, o sinal de divergência no 1X2 e o viés
@@ -118,3 +126,69 @@ provavelmente **por isso** que a ineficiência existe. Se o dinheiro disponível
 for pequeno demais, a vantagem existe no papel e não no bolso.
 
 Só a operação real responde isso, e é por isso que a checagem manual importa.
+
+
+---
+
+# CORREÇÃO: a regra não funciona
+
+## O erro
+
+Na Betfair, **fazer lay em Over 2.5 é exatamente a mesma coisa que fazer back
+em Under 2.5**. São o mesmo negócio.
+
+Eu calculei o lucro do "lay em Over" usando o preço de **back do Over** — um
+preço no qual ninguém consegue executar um lay. Para fazer lay você precisa de
+alguém do outro lado, e esse preço é o de back do Under.
+
+A diferença entre os dois é o **spread**, e o spread é exatamente o que você
+**paga** para operar, não o que você ganha.
+
+## Os números corrigidos
+
+Over/Under 2.5:
+
+| Limiar | Como eu calculei (errado) | Executável |
+|---|---|---|
+| −6% | +5,31% (t=2,17) | **−10,28% (t=−5,22)** |
+| −8% | +10,22% (t=3,23) | **−8,80% (t=−3,46)** |
+| −10% | +11,47% (t=2,78) | **−13,51% (t=−4,12)** |
+| −15% | +27,00% (t=4,40) | **−12,63% (t=−2,54)** |
+
+Handicap asiático, mesmo padrão:
+
+| Limiar | Errado | Executável |
+|---|---|---|
+| −6% | +7,43% | **−8,45% (t=−2,33)** |
+| −8% | +8,11% | **−11,23% (t=−2,42)** |
+| −10% | +7,28% | **−14,88% (t=−2,54)** |
+
+## O controle que explica tudo
+
+Apostar na Betfair **sem filtro nenhum**, no Over/Under 2.5:
+
+| Estratégia | n | ROI | t |
+|---|---|---|---|
+| Sempre Over 2.5 | 7.495 | −5,79% | −5,41 |
+| Sempre Under 2.5 | 7.553 | −6,37% | −5,42 |
+
+Esse é o **custo de jogar**: comissão mais spread. Qualquer estratégia precisa
+superar isso antes de lucrar um centavo.
+
+E aqui está o veredito: **todas as minhas regras filtradas (−8,8% a −14,9%)
+são PIORES que apostar às cegas (−5,8%).** O filtro não seleciona preço bom —
+seleciona livro largo, e livro largo significa spread caro.
+
+Foi por isso que os jogos selecionados tinham overround mediano de 1,089
+contra 1,019 do mercado normal, e por isso que em 29% dos casos a regra
+disparava nos dois lados ao mesmo tempo, o que é logicamente impossível como
+sinal de valor.
+
+## A lição
+
+Num mercado de duas pontas, "o preço está abaixo do justo de um lado" quase
+nunca é oportunidade. Geralmente é só a metade barata do spread — e o spread
+é o preço da liquidez, que você paga, não recebe.
+
+Toda medição de estratégia precisa usar o preço que **executa**, não o que
+aparece na tabela.
